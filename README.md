@@ -1,7 +1,18 @@
-# BENDR 
-*BErt-like Neurophysiological Data Representation*
+# Integrating Neurological Priors Into Self Supervised Learning for Electroencephalography
+This repository contains the source code for the article:
+Integrating Neurological Priors Into Self Supervised Learning for Electroencephalography.
 
-![A picture of Bender from Futurama][logo]
+This project is an extension of the BENDR source and paper. Where BENDR directly maps SSL methodologies from NLP, our approach modifies it so that it is more concretely grounded in the electrophysiological and cognitive priors of the data. We do this in two ways, firstly with a more robust reduction methodology that maps arbitrary sensor counts and configurations and secondly with a contrastive learning method more strongly rooted in cognitive neuroscience. 
+
+BENDR downsamples multichannel EEG data into a single channel for training by using 1D convolutions, which constrains it to the channel count that they truncate to. Furthermore, this approach is not robust to different sensor layouts, which can be the case depending on the equipement used for the reading. This is why we use a graph net informed with the physical information of the layout for sequence reduction insted. This is an existing technique from [EEG decoding for datasets with heterogeneous electrode configurations using transfer learning graph neural networks, 2023](https://iopscience.iop.org/article/10.1088/1741-2552/ad09ff/meta)
+
+BENDR does contrastive learning like wav2vec, trying to unmix permutations of eeg time series sequences. This approach is very sensible in the context of language processing as spoken sentences are known to be based on highly regular grammars with relatively few valid permuations relative to invalid ones along with having have definate start and ends. In the context of EEG data, none of these priors can be assumed to hold. We instead train by clustering segments by task-switching, through models validated by existing neuroscience work. The logic being that segmenting every time task switching occurs, we can track different thought processes, mental states, and actions, which is highly valuble, and rooted in validated principles.
+
+Below is the instructions for running it (currently copied from BENDR, pending rewrite)
+
+
+## BENDR 
+*BErt-like Neurophysiological Data Representation*
 
 This repository contains the source code for reproducing, or extending the BERT-like self-supervision pre-training for EEG data from the article:
 
@@ -21,7 +32,3 @@ Once you have a pre-trained model:
     1) Add the paths of the pre-trained weights to configs/downstream.yml
     2) Edit paths to local copies of your datasets in configs/downstream_datasets.yml
     3) Run downstream.sh
-    
-## 
-
-[logo]: BENDR-jacking-on.gif "Bender Jacking-on"
