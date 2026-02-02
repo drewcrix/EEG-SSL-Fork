@@ -163,6 +163,8 @@ class GCNEncoder(nn.Module):
     def __init__(self, nfeat, nhid, nout, dropout=0.5, pool_ratio=0.8):
         super().__init__()
 
+        # I think DN3 needs a format for self.encoder_h = nout
+
         self.gc1 = GCNConv(nfeat, nhid)
         self.bn1 = nn.BatchNorm1d(nhid)
         self.rel1 = nn.PReLU()
@@ -190,6 +192,7 @@ class GCNEncoder(nn.Module):
         x, edge_index, edge_weight, batch = self.pool2(x, edge_index, edge_attr=edge_weight, batch=batch) #sag pooling
         x = self.drop(x)
 
+        # DN3 needs (batch, features, timepoints); global mean pooling here removes the temporal dimension and collapses to a single vector (does CNN fix this?)
         z = global_mean_pool(x, batch)  # global mean pooling
 
         return x, z
