@@ -108,10 +108,12 @@ class CNNEncoder(nn.Module):
         x = self.block2(x)
         x = self.block3(x)
 
-        x = x.mean(dim=-1)   #averages the strength of the features over time.
+       # x = x.mean(dim=-1)   #averages the strength of the features over time.
+
+        _, F, Tp = x.shape()
 
         # Back to per-electrode node embeddings: (B, C, F)
-        x = x.reshape(B, C, self.F)
+        x = x.reshape(B, C, F, Tp) #keeping the time dimension 
         return x
 
 model = CNNEncoder()
