@@ -116,4 +116,4 @@ class CNNEncoder(nn.Module):
 
 model = CNNEncoder()
 
-model = CNNEncoder()
+
