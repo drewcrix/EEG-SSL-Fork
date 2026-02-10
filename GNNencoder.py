@@ -80,8 +80,8 @@ print("Connections for FC5:", adj_matrix[ch_names.index("FC5")]) #prints the con
 
 
 # Convert dense adjacency matrix to edge_index and edge_weight format for PyTorch Geometric
-A = torch.tensor(adj_matrix, dtype=torch.float32)  
-edge_index, edge_weight = dense_to_sparse(A) 
+A_matrix = torch.tensor(adj_matrix, dtype=torch.float32)  
+edge_index, edge_weight = dense_to_sparse(A_matrix) 
 
 
 class SAGPool(nn.Module):
@@ -101,24 +101,6 @@ class SAGPool(nn.Module):
 
         edge_index, edge_attr = filter_adj(edge_index, edge_attr, perm, num_nodes=score.size(0))
         return x, edge_index, edge_attr, batch
-
-
-def repeat_fixed_graph(edge_index: torch.Tensor,
-                       edge_weight: torch.Tensor,
-                       num_graphs: int,
-                       C: int):
-    if num_graphs == 1:
-        return edge_index, edge_weight
-
-    device = edge_index.device
-    E = edge_index.size(1)
-
-    edge_index_big = edge_index.repeat(1, num_graphs)  
-    offsets = (torch.arange(num_graphs, device=device) * C).repeat_interleave(E)
-    edge_index_big = edge_index_big + offsets.unsqueeze(0)
-
-    edge_weight_big = edge_weight.repeat(num_graphs)
-    return edge_index_big, edge_weight_big
 
 
 class GCNEncoder(nn.Module):
@@ -147,6 +129,20 @@ class GCNEncoder(nn.Module):
         self.pool2 = SAGPool(nout, ratio=pool_ratio, Conv=GCNConv)
 
         self.drop = nn.Dropout(p=dropout)
+    
+    def _repeat_fixed_graph(self, edge_index, edge_weight, num_graphs, C):
+        if num_graphs == 1:
+            return edge_index, edge_weight
+
+        device = edge_index.device
+        E = edge_index.size(1)
+
+        edge_index_big = edge_index.repeat(1, num_graphs)
+        offsets = (torch.arange(num_graphs, device=device) * C).repeat_interleave(E)
+        edge_index_big = edge_index_big + offsets.unsqueeze(0)
+
+        edge_weight_big = edge_weight.repeat(num_graphs)
+        return edge_index_big, edge_weight_big
 
     def forward(self, h: torch.Tensor, edge_index: torch.Tensor, edge_weight: torch.Tensor):
 
@@ -160,7 +156,7 @@ class GCNEncoder(nn.Module):
         batch = torch.arange(num_graphs, device=h.device, dtype=torch.long).repeat_interleave(C)
 
         # disjoint-union adjacency for all graphs in this forward
-        edge_index_big, edge_weight_big = repeat_fixed_graph(edge_index, edge_weight, num_graphs, C)
+        edge_index_big, edge_weight_big = self._repeat_fixed_graph(edge_index, edge_weight, num_graphs, C)
 
         # ----- Block 1 -----
         x = self.gc1(x, edge_index_big, edge_weight=edge_weight_big)
