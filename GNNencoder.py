@@ -84,20 +84,6 @@ A = torch.tensor(adj_matrix, dtype=torch.float32)
 edge_index, edge_weight = dense_to_sparse(A) 
 
 
-#---------------------------
-#Now normalize the adjacency matrix
-def normalize_adj(A: np.ndarray, add_self=True) -> torch.Tensor:
-    if add_self: #each node connected to itself
-        A = A + np.eye(A.shape[0]) # A + AI
-    D = np.sum(A, axis=1) #row sum degree vector 
-    D_inv_sqrt = np.diag(1.0 / np.sqrt(D)) # diagonal matrix turns the vector D into a diagonal matrix 
-    A_norm = D_inv_sqrt @ A @ D_inv_sqrt #performs matrix multiplication. Can also us np.linalg.multi_dot for multiple matrices
-    return torch.from_numpy(A_norm).float()
-
-A_norm = normalize_adj(adj_matrix, add_self=True)  # (S,S), #normalization of adjacency matrix actually gets conducted in the GCNConv layer so this is just for visualization here 
-
-print("Normalized adjacency matrix A_norm:")
-
 class SAGPool(nn.Module):
     def __init__(self, in_channels, ratio=0.8, Conv=GCNConv, non_linearity=torch.tanh):
         super().__init__()
