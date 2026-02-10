@@ -98,72 +98,57 @@ A_norm = normalize_adj(adj_matrix, add_self=True)  # (S,S), #normalization of ad
 
 print("Normalized adjacency matrix A_norm:")
 
-
-
-"""
-class GraphConvolution(nn.Module):
- 
-    Simple GCN layer, similar to https://arxiv.org/abs/1609.02907
- 
-
-    def __init__(self, in_features, out_features, bias=True):
-        super(GraphConvolution, self).__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-        self.weight = nn.Parameter(torch.FloatTensor(in_features, out_features))
-        if bias:
-            self.bias = nn.Parameter(torch.FloatTensor(out_features))
-        else:
-            self.register_parameter('bias', None)
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        stdv = 1. / math.sqrt(self.weight.size(1))
-        self.weight.data.uniform_(-stdv, stdv)
-        if self.bias is not None:
-            self.bias.data.uniform_(-stdv, stdv)
-
-    def forward(self, input, adj):
-        support = torch.mm(input, self.weight)
-        output = torch.spmm(adj, support)
-        if self.bias is not None:
-            return output + self.bias
-        else:
-            return output
-
-    def __repr__(self):
-        return self.__class__.__name__ + ' (' \
-               + str(self.in_features) + ' -> ' \
-               + str(self.out_features) + ')'
-"""   
-
-class SAGPool(torch.nn.Module):
-    def __init__(self,in_channels,ratio=0.8,Conv=GCNConv,non_linearity=torch.tanh):
-        super(SAGPool,self).__init__()
+class SAGPool(nn.Module):
+    def __init__(self, in_channels, ratio=0.8, Conv=GCNConv, non_linearity=torch.tanh):
+        super().__init__()
         self.in_channels = in_channels
         self.ratio = ratio
-        self.score_layer = Conv(in_channels,1)
+        self.score_layer = Conv(in_channels, 1)
         self.non_linearity = non_linearity
+
     def forward(self, x, edge_index, edge_attr=None, batch=None):
-        if batch is None:
-            batch = edge_index.new_zeros(x.size(0))
-        #x = x.unsqueeze(-1) if x.dim() == 1 else x
-        score = self.score_layer(x,edge_index).squeeze()
+        score = self.score_layer(x, edge_index).squeeze(-1)  # (N,)
 
         perm = topk(score, self.ratio, batch)
         x = x[perm] * self.non_linearity(score[perm]).view(-1, 1)
         batch = batch[perm]
-        edge_index, edge_attr = filter_adj(
-            edge_index, edge_attr, perm, num_nodes=score.size(0))
 
-        return x, edge_index, edge_attr, batch, perm
+        edge_index, edge_attr = filter_adj(edge_index, edge_attr, perm, num_nodes=score.size(0))
+        return x, edge_index, edge_attr, batch
+
+
+def repeat_fixed_graph(edge_index: torch.Tensor,
+                       edge_weight: torch.Tensor,
+                       num_graphs: int,
+                       C: int):
+    if num_graphs == 1:
+        return edge_index, edge_weight
+
+    device = edge_index.device
+    E = edge_index.size(1)
+
+    edge_index_big = edge_index.repeat(1, num_graphs)  
+    offsets = (torch.arange(num_graphs, device=device) * C).repeat_interleave(E)
+    edge_index_big = edge_index_big + offsets.unsqueeze(0)
+
+    edge_weight_big = edge_weight.repeat(num_graphs)
+    return edge_index_big, edge_weight_big
 
 
 class GCNEncoder(nn.Module):
-    def __init__(self, nfeat, nhid, nout, dropout=0.5, pool_ratio=0.8):
-        super().__init__()
+    """
+    GNN encoder for CNN output shaped (B, C, F, Tp).
 
-        # I think DN3 needs a format for self.encoder_h = nout
+    - B  : trials (mini-batch size)
+    - C  : electrodes (nodes per graph)
+    - F  : Feature dim per electrode provided from CNN
+    - Tp : Time dimension containing feature strengths over time
+
+    Treat each time slice as a separate graph by folding time into the batch dimension:
+      num_graphs = B * Tp, electrodes/nodes per graph = C
+    """
+    def __init__(self, nfeat: int, nhid: int, nout: int, dropout: float = 0.5, pool_ratio: float = 0.8):
+        super().__init__()
 
         self.gc1 = GCNConv(nfeat, nhid)
         self.bn1 = nn.BatchNorm1d(nhid)
@@ -177,23 +162,40 @@ class GCNEncoder(nn.Module):
 
         self.drop = nn.Dropout(p=dropout)
 
-    def forward(self, x, edge_index, edge_weight=None, batch=None): #maybe issues with the batch that I need to fix
+    def forward(self, h: torch.Tensor, edge_index: torch.Tensor, edge_weight: torch.Tensor):
+
+        B, C, F, Tp = h.shape
+        num_graphs = B * Tp
+
+        # Fold time into batch: (B, C, F, Tp) -> (B, Tp, C, F) -> (B*Tp*C, F)
+        # PyG expects (n_out, F) therefore collapsing time and electrodes into channels
+        x = h.permute(0, 3, 1, 2).contiguous().view(num_graphs * C, F)
+
+        batch = torch.arange(num_graphs, device=h.device, dtype=torch.long).repeat_interleave(C)
+
+        # disjoint-union adjacency for all graphs in this forward
+        edge_index_big, edge_weight_big = repeat_fixed_graph(edge_index, edge_weight, num_graphs, C)
+
         # ----- Block 1 -----
-        x = self.gc1(x, edge_index, edge_weight=edge_weight)
+        x = self.gc1(x, edge_index_big, edge_weight=edge_weight_big)
         x = self.bn1(x)
         x = self.rel1(x)
-        x, edge_index, edge_weight, batch = self.pool1(x, edge_index, edge_attr=edge_weight, batch=batch)
+        x, edge_index_big, edge_weight_big, batch = self.pool1(
+            x, edge_index_big, edge_attr=edge_weight_big, batch=batch
+        )
         x = self.drop(x)
 
         # ----- Block 2 -----
-        x = self.gc2(x, edge_index, edge_weight=edge_weight)
+        x = self.gc2(x, edge_index_big, edge_weight=edge_weight_big)
         x = self.bn2(x)
         x = self.rel2(x)
-        x, edge_index, edge_weight, batch = self.pool2(x, edge_index, edge_attr=edge_weight, batch=batch) #sag pooling
+        x, edge_index_big, edge_weight_big, batch = self.pool2(
+            x, edge_index_big, edge_attr=edge_weight_big, batch=batch
+        )
         x = self.drop(x)
 
-        # DN3 needs (batch, features, timepoints); global mean pooling here removes the temporal dimension and collapses to a single vector (does CNN fix this?)
-        z = global_mean_pool(x, batch)  # global mean pooling
+       
+        z = global_mean_pool(x, batch)   
+        z_seq = z.view(B, Tp, -1)        
 
-        return x, z
-
+        return x, z_seq
