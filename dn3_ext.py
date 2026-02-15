@@ -228,6 +228,309 @@ def _make_mask(shape, p, total, span, allow_no_inds=False):
 
     return mask
 
+class NEWBendingCollegeWav2Vec(BendingCollegeWav2Vec):
+    """
+    NEW BENDR with custom loss
+    
+    1. InfoNCE Loss (original): masked temporal prediction
+    2. Cluster Contrastive Loss: task-aware grouping  
+    3. Reconstruction Loss (optional): fine-grained detail learning (patterns in waveform)
+    
+    - InfoNCE with κ=0.1, 20 negatives optimal for EEG (BENDR validation)
+    - Cluster-aware contrastive captures task structure (ContraWR, 2023)
+    - Equal loss weighting (α=1.0) works well (EEGPT ablation studies)
+    """
+    
+    def __init__(self, encoder, context_fn,
+                 # Original BENDR parameters
+                 mask_rate=0.065, mask_span=10, temp=0.1, num_negatives=20,
+                 learning_rate=0.00002, enc_feat_l2=1.0, encoder_grad_frac=1.0,
+                 # Enhanced loss parameters
+                 use_cluster_loss=True, 
+                 use_reconstruction_loss=False,
+                 alpha_infonce=1.0,      # Weight for original InfoNCE
+                 alpha_cluster=0.5,      # Weight for cluster contrastive
+                 alpha_recon=1.0,        # Weight for reconstruction
+                 cluster_temp=0.5,       # Temperature for cluster loss
+                 num_clusters=3,         # Number of task clusters
+                 cluster_memory_size=1000,  # Size of cluster memory bank
+                 **kwargs):
+        
+        # Initialize parent (original BENDR)
+        super().__init__(encoder, context_fn, mask_rate=mask_rate, mask_span=mask_span,
+                        learning_rate=learning_rate, temp=temp, num_negatives=num_negatives,
+                        enc_feat_l2=enc_feat_l2, encoder_grad_frac=encoder_grad_frac, **kwargs)
+        
+        # Store new parameters (booleans if we are using the loss/combination of losses)
+        self.use_cluster_loss = use_cluster_loss
+        self.use_reconstruction_loss = use_reconstruction_loss
+        self.alpha_infonce = alpha_infonce
+        self.alpha_cluster = alpha_cluster
+        self.alpha_recon = alpha_recon
+        self.cluster_temp = cluster_temp
+        self.num_clusters = num_clusters
+        
+        # Cluster memory bank for contrastive learning
+        # Stores recent embeddings from each cluster
+        if self.use_cluster_loss:
+            encoder_h = encoder.encoder_h if not isinstance(encoder, nn.DataParallel) else encoder.module.encoder_h
+            self.register_buffer('cluster_memory', 
+                               torch.randn(num_clusters, encoder_h, cluster_memory_size))
+            self.register_buffer('cluster_ptr', torch.zeros(num_clusters, dtype=torch.long))
+            # Normalize memory bank
+            self.cluster_memory = F.normalize(self.cluster_memory, dim=1)
+        
+        # Reconstruction decoder (optional)
+        if self.use_reconstruction_loss:
+            self.decoder = self._build_decoder(encoder)
+        
+        # Track loss components for logging
+        self.loss_components = {}
+    
+    def _build_decoder(self, encoder):
+        """
+        Builds decoder to reconstruct EEG from embeddings.
+        Simple transposed convolution architecture mirroring encoder.
+        
+        """
+        if isinstance(encoder, nn.DataParallel):
+            encoder = encoder.module
+        
+        encoder_h = encoder.encoder_h
+        # Get encoder architecture details
+        enc_width = encoder._width
+        enc_downsample = encoder._downsampling
+        
+        # Build decoder (reverse of encoder)
+        decoder_layers = []
+        
+        # Reverse the encoder's downsampling
+        for i, (width, downsample) in enumerate(zip(reversed(enc_width), 
+                                                     reversed(enc_downsample))):
+            out_features = encoder_h if i < len(enc_width) - 1 else 20  # 20 EEG channels
+            
+            decoder_layers.append(nn.Sequential(
+                nn.ConvTranspose1d(encoder_h, out_features, width, 
+                                  stride=downsample, 
+                                  padding=width // 2,
+                                  output_padding=downsample - 1 if downsample > 1 else 0),
+                nn.GroupNorm(out_features // 2 if out_features > 2 else 1, out_features),
+                nn.GELU() if i < len(enc_width) - 1 else nn.Identity()
+            ))
+            encoder_h = out_features
+        
+        return nn.Sequential(*decoder_layers)
+    
+    def _compute_cluster_contrastive_loss(self, embeddings, cluster_labels):
+        """
+        Cluster-aware contrastive loss. Modified from BENDR
+        
+        Pulls together embeddings from same cluster (same task/brain state).
+        Pushes apart embeddings from different clusters (different tasks).
+
+        
+        Args:
+            embeddings: (batch, feat, seq_len) encoder outputs
+            cluster_labels: (batch,) cluster assignments [0, 1, 2, ...]
+        
+        Returns:
+            Scalar loss value
+        """
+        batch_size, feat, seq_len = embeddings.shape
+        
+        # Global average pooling: (batch, feat, seq_len) to (batch, feat)
+        pooled = embeddings.mean(dim=-1)  # Average across time
+        pooled = F.normalize(pooled, dim=1)  # L2 normalize
+        
+        # Update cluster memory bank
+        with torch.no_grad():
+            for cluster_id in range(self.num_clusters):
+                # Find samples from this cluster
+                mask = (cluster_labels == cluster_id)
+                if mask.sum() == 0:
+                    continue
+                
+                cluster_samples = pooled[mask]  # (n_samples, feat)
+                n_samples = cluster_samples.shape[0]
+                
+                # Add to memory bank (FIFO queue)
+                ptr = int(self.cluster_ptr[cluster_id])
+                memory_size = self.cluster_memory.shape[2]
+                
+                # Wrap around if exceeds memory size
+                if ptr + n_samples <= memory_size:
+                    self.cluster_memory[cluster_id, :, ptr:ptr+n_samples] = cluster_samples.T
+                    self.cluster_ptr[cluster_id] = (ptr + n_samples) % memory_size
+                else:
+                    # Split across boundary
+                    remaining = memory_size - ptr
+                    self.cluster_memory[cluster_id, :, ptr:] = cluster_samples[:remaining].T
+                    self.cluster_memory[cluster_id, :, :n_samples-remaining] = cluster_samples[remaining:].T
+                    self.cluster_ptr[cluster_id] = n_samples - remaining
+        
+        # Compute contrastive loss
+        # For each sample, positive = same cluster, negative = different clusters
+        loss = 0.0
+        num_valid = 0
+        
+        for i in range(batch_size):
+            sample = pooled[i:i+1]  # (1, feat)
+            label = cluster_labels[i].item()
+            
+            # Positive samples: from same cluster in memory bank
+            pos_samples = self.cluster_memory[label]  # (feat, memory_size)
+            pos_sim = torch.mm(sample, pos_samples) / self.cluster_temp  # (1, memory_size)
+            
+            # Negative samples: from different clusters
+            neg_mask = torch.ones(self.num_clusters, dtype=torch.bool)
+            neg_mask[label] = False
+            neg_samples = self.cluster_memory[neg_mask]  # (num_clusters-1, feat, memory_size)
+            neg_samples = neg_samples.reshape(-1, neg_samples.shape[-1])  # (feat, total_neg)
+            neg_sim = torch.mm(sample, neg_samples) / self.cluster_temp  # (1, total_neg)
+            
+            # InfoNCE-style loss
+            # Numerator: exp(positive similarities)
+            # Denominator: exp(positive) + exp(negatives)
+            pos_exp = torch.exp(pos_sim).mean()  # Average over positive samples
+            neg_exp = torch.exp(neg_sim).sum()
+            
+            loss += -torch.log(pos_exp / (pos_exp + neg_exp + 1e-8))
+            num_valid += 1
+        
+        return loss / max(num_valid, 1)
+    
+    def _compute_reconstruction_loss(self, embeddings, original_eeg, mask):
+        """
+        Reconstruction loss: predict original EEG from masked embeddings.
+        
+        
+        Args:
+            embeddings: (batch, feat, seq_len) encoder outputs
+            original_eeg: (batch, channels, samples) original input
+            mask: (batch, seq_len) boolean mask indicating masked positions
+        
+        Returns:
+            MSE loss on reconstructed EEG
+        """
+        # Decode embeddings back to EEG space
+        reconstructed = self.decoder(embeddings)  # (batch, 20, samples)
+        
+        # Layer normalization on target (critical for stable training - EEGPT finding)
+        original_norm = F.layer_norm(original_eeg, original_eeg.shape[1:])
+        reconstructed_norm = F.layer_norm(reconstructed, reconstructed.shape[1:])
+        
+        # Only compute loss on masked regions (like MAE/BERT)
+        # Expand mask to match EEG resolution
+        batch_size, channels, samples = original_eeg.shape
+        seq_len = embeddings.shape[-1]
+        downsample_factor = samples // seq_len
+        
+        # Upsample mask: (batch, seq_len) to (batch, samples)
+        mask_upsampled = mask.unsqueeze(-1).repeat(1, 1, downsample_factor).reshape(batch_size, -1)
+        mask_upsampled = mask_upsampled[:, :samples]  # Trim to exact size
+        
+        # Apply mask to both original and reconstructed
+        mask_expanded = mask_upsampled.unsqueeze(1).expand_as(original_norm)
+        
+        # MSE loss only on masked regions
+        mse = F.mse_loss(reconstructed_norm[mask_expanded], 
+                        original_norm[mask_expanded],
+                        reduction='mean')
+        
+        return mse
+    
+    def forward(self, *inputs, cluster_labels=None):
+        """
+        Forward pass with new losses.
+        
+        Args:
+            inputs[0]: Raw EEG (batch, channels, samples)
+            cluster_labels: Optional (batch,) tensor of cluster assignments
+        
+        Returns:
+            Tuple of (logits, embeddings, mask) for compatibility
+        """
+        # Call parent forward (original BENDR)
+        logits, embeddings, mask = super().forward(*inputs)
+        
+        # Store for loss calculation
+        self._current_embeddings = embeddings
+        self._current_mask = mask
+        self._current_cluster_labels = cluster_labels
+        self._original_eeg = inputs[0]
+        
+        return logits, embeddings, mask
+    
+    def calculate_loss(self, inputs, outputs):
+        """
+        Enhanced loss combining multiple objectives.
+        
+        Loss = α₁ * L_InfoNCE + α₂ * L_cluster + α₃ * L_recon + β * L_reg
+        
+        Research configuration (from paper analysis):
+        - α₁ = 1.0 (baseline InfoNCE)
+        - α₂ = 0.5 (cluster loss - lower weight for auxiliary task)
+        - α₃ = 1.0 (reconstruction - equal weight from EEGPT)
+        - β = 1.0 (L2 regularization - existing BENDR)
+        - Temperature κ = 0.1 (InfoNCE), τ = 0.5 (cluster)
+        """
+        # Original InfoNCE loss (masked temporal prediction)
+        logits = outputs[0]
+        labels = torch.zeros(logits.shape[0], device=logits.device, dtype=torch.long)
+        loss_infonce = self.loss_fn(logits, labels)
+        
+        # L2 regularization on encoder features (original BENDR)
+        loss_reg = self.beta * outputs[1].pow(2).mean()
+        
+        # Start with base loss
+        total_loss = self.alpha_infonce * loss_infonce + loss_reg
+        
+        # Store components for logging
+        self.loss_components = {
+            'InfoNCE': loss_infonce.item(),
+            'L2_Reg': loss_reg.item()
+        }
+        
+        # Cluster contrastive loss 
+        if self.use_cluster_loss and hasattr(self, '_current_cluster_labels') \
+           and self._current_cluster_labels is not None:
+            
+            loss_cluster = self._compute_cluster_contrastive_loss(
+                self._current_embeddings,
+                self._current_cluster_labels
+            )
+            total_loss += self.alpha_cluster * loss_cluster
+            self.loss_components['Cluster'] = loss_cluster.item()
+        
+        # Reconstruction loss 
+        if self.use_reconstruction_loss:
+            loss_recon = self._compute_reconstruction_loss(
+                self._current_embeddings,
+                self._original_eeg,
+                self._current_mask
+            )
+            total_loss += self.alpha_recon * loss_recon
+            self.loss_components['Reconstruction'] = loss_recon.item()
+        
+        return total_loss
+    
+    def description(self, sequence_len):
+        """Enhanced description including new loss components."""
+        desc = super().description(sequence_len)
+        
+        desc += "\n  Enhanced Loss Components:"
+        desc += f"\n    - InfoNCE (α={self.alpha_infonce})"
+        
+        if self.use_cluster_loss:
+            desc += f"\n    - Cluster Contrastive (α={self.alpha_cluster}, τ={self.cluster_temp}, K={self.num_clusters})"
+        
+        if self.use_reconstruction_loss:
+            desc += f"\n    - Reconstruction (α={self.alpha_recon})"
+        
+        desc += f"\n    - L2 Regularization (β={self.beta})"
+        
+        return desc
+
 
 class BendingCollegeWav2Vec(BaseProcess):
     """
