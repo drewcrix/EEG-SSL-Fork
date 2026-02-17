@@ -15,7 +15,7 @@ import glob
 # List of openneuro dataset ids to download
 dataset_ids = [
     "ds004504",
-    "ds003775"
+    "ds003775",
     "ds007358"
     ]
 
