@@ -364,7 +364,7 @@ def merge_back_to_back(task_switch):
 read all the dataset file under the path.
 """
 
-def generate_task_switch_file(path='./on', sfreq=256, BIDS_export_path = "task_switch_labels.json"):
+def generate_task_switch_file(path='./on', sfreq=256, BIDS_export_path = "task_switch_labels.npy"):
     
     """
     path: The path of the dataset floder
@@ -412,12 +412,9 @@ def generate_task_switch_file(path='./on', sfreq=256, BIDS_export_path = "task_s
                     final_segments = gfp_check(verified_at_segments, smooth_gfp, sfreq=sfreq)
                     after_merge = merge_back_to_back(final_segments)
                     
-                    #Export the task switch file, save in json file. 
-                    clean_task_switch = [list(item) if isinstance(item, tuple) else item for item in after_merge]
-                    
                     all_results.append({
                         "name": relative_path, 
-                        "task_switch": clean_task_switch
+                        "task_switch": after_merge
                     })
                     
                 except Exception as e:
@@ -425,4 +422,4 @@ def generate_task_switch_file(path='./on', sfreq=256, BIDS_export_path = "task_s
     with open(BIDS_export_path, 'w') as f:
         json.dump(all_results, f, indent=4)
 
-generate_task_switch_file("./data/sleep", 100, "./task_switch_labels.json")
+generate_task_switch_file("./data/sleep", 100, "./task_switch_labels.npy")
