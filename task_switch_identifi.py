@@ -340,23 +340,29 @@ Step 4:Merge back to back and overlap task switch time point
 """
 #A function for merge all back to back task switch
 def merge_back_to_back(task_switch):
-    #Set variable
+    if len(task_switch) == 0:
+        return []
+    if len(task_switch) == 1:
+        return list(task_switch)
+
     merged_segments = []
     current_start, current_end = task_switch[0]
     total = len(task_switch)
-    i=1
-    
+    i = 1
+
     while i < total:
         if task_switch[i][0] <= current_end:
             current_end = max(task_switch[i][1], current_end)
-            i+=1
+            i += 1
         else:
             merged_segments.append((current_start, current_end))
             current_start, current_end = task_switch[i]
             i += 1
-    if merged_segments[len(merged_segments)-1][0] != current_start:
+
+    # Append the last segment if it wasn't already added
+    if len(merged_segments) == 0 or merged_segments[-1][0] != current_start:
         merged_segments.append((current_start, current_end))
-    
+
     return merged_segments
         
 
@@ -410,10 +416,14 @@ def generate_task_switch_file(path='./on', sfreq=256, BIDS_export_path = "task_s
                     smooth_gfp = calculate_GFP(df_eeg, sfreq=sfreq)
                     verified_at_segments = verify_alpha_theta_2(df_eeg, candidates, sfreq=sfreq)
                     final_segments = gfp_check(verified_at_segments, smooth_gfp, sfreq=sfreq)
-                    after_merge = merge_back_to_back(final_segments)
-                    
+
+                    if len(final_segments) > 1:
+                        after_merge = merge_back_to_back(final_segments)
+                    else:
+                        after_merge = final_segments
+
                     all_results.append({
-                        "name": relative_path, 
+                        "name": relative_path,
                         "task_switch": after_merge
                     })
                     
@@ -422,4 +432,17 @@ def generate_task_switch_file(path='./on', sfreq=256, BIDS_export_path = "task_s
     with open(BIDS_export_path, 'w') as f:
         json.dump(all_results, f, indent=4)
 
-generate_task_switch_file("./data/sleep", 100, "./task_switch_labels.npy")
+
+if __name__ == "__main__":
+    import argparse
+
+    #example: python task_switch_identifi.py --path ./on --sfreq 256 --output task_switch_labels.json
+    parser = argparse.ArgumentParser(description="Scan EEG files and detect task switch windows.")
+    parser.add_argument('--path',   default='./on',                    help="Folder to scan for .edf/.bdf/.set/.fif files.")
+    parser.add_argument('--sfreq',  default=256, type=int,             help="Target sfreq in Hz, files are resampled if needed.")
+    parser.add_argument('--output', default='task_switch_labels.json', help="Output JSON file path.")
+    args = parser.parse_args()
+
+    print(f"Scanning {args.path} at {args.sfreq} Hz ...")
+    generate_task_switch_file(args.path, args.sfreq, args.output)
+    print(f"Done. Written to {args.output}")
