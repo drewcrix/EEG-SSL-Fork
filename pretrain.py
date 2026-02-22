@@ -23,6 +23,8 @@ from dn3.configuratron import ExperimentConfig
 from dn3.transforms.instance import To1020
 from dn3.transforms.batch import RandomTemporalCrop
 from gen_labels import load_label_file, epoch_label
+from GNNencoder import GCNEncoder
+from CNNencoder import CNNEncoder
 
 from torch.utils.data import ConcatDataset, Dataset
 
@@ -169,7 +171,37 @@ if __name__ == '__main__':
 
     #To1020 gives 21 channels (EEG_20_div + 1), update this when GNN encoder is in
     n_channels = len(To1020.EEG_20_div) + 1
-    encoder = ConvEncoderBENDR(n_channels, encoder_h=args.hidden_size)
+
+    #encoder = CNNEncoder(n_channels, encoder_h=args.hidden_size) #replaced ConvEncoderBENDR with CNNEncoder (no spatial mixing, purely temporal)
+  
+    cnn = CNNEncoder(
+      output_channels=max(1, args.hidden_size // 4),
+      kernel_sizes=(128, 64, 32),
+      pool_sizes=(5, 3, 2),
+      dropout=0.5,
+      stride=1,
+      padding="same",
+    )
+    gnn = GCNEncoder(
+      nfeat=cnn.F,
+      nhid=args.hidden_size,   
+      nout=args.hidden_size,
+      dropout=getattr(experiment, "dropout", 0.5),
+      pool_ratio=0.9,
+    )
+
+    class Encoder(torch.nn.Module):
+      def __init__(self, cnn, gnn, encoder_h):
+        super().__init__()
+        self.cnn = cnn
+        self.gnn = gnn
+        self.encoder_h = encoder_h  
+
+      def forward(self, x):
+        h = self.cnn(x)  
+        x, z_seq = self.gnn(h) #returns (x_nodes, z_seq), z_seq in dimension (B, F, T)
+        return z_seq  
+      
     tqdm.tqdm.write(encoder.description(
         getattr(experiment, 'global_sfreq', 256),
         getattr(experiment, 'global_samples', 2560)))
