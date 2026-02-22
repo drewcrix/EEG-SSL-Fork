@@ -16,91 +16,73 @@ import math
 from torch_geometric.nn import GCNConv
 from torch_geometric.nn import global_mean_pool
 from torch_geometric.utils import dense_to_sparse
-from torch_geometric.nn.pool.topk_pool import topk,filter_adj
+from torch_geometric.nn import SAGPooling
 from torch.nn import Parameter
 
-# ---------------------------
+dataset = PhysionetMI() #working for physionetMT() must change for BIDS
 subject = 1
-run = 4
+hand_runs = [4, 8, 12]  # Runs corresponding to left and right hand movements
+feet_runs = [6, 10, 14]  # Runs corresponding to feet movements
 
-dataset = PhysionetMI()
+def _load_subject_raw(data, subj, handrun, feetrun, preload=True):
+    filenames = create_paths(subj, handrun, feetrun, data)
+    raws = {"hand": [], "feet": []}
+    raw_fname_hand = filenames['hand']
+    raw_fname_feet = filenames['feet'] 
+    for runname in raw_fname_hand:
+        raws["hand"].append(raw_info(read_raw_edf(runname, preload=preload, verbose="ERROR")))
+    for runname in raw_fname_feet:
+        raws["feet"].append(raw_info(read_raw_edf(runname, preload=preload, verbose="ERROR")))
+    return raws
 
-#data = dataset._get_single_subject_data(subject)
+def create_paths(subject, hand_runs, feet_runs, dataset):
+    base_dir = Path(__file__).parent #directory above the current file
+    subject_dir = os.path.join(base_dir, f"data/subject_{subject}") #created path for this subject's data
+    path_hands = os.path.join(subject_dir, "hand_runs") #created path for hand runs data
+    path_feet = os.path.join(subject_dir, "feet_runs") #created path for feet runs data
 
-#runTest = data["0"]["0"] #the structure is a nested dictionary
+    dataset._load_data(subject, feet_runs, path=path_feet) #loads the feet runs locally for this subject
+    dataset._load_data(subject, hand_runs, path=path_hands) #loads the hand runs locally for this subject
+
+    #make a list of each downloaded run filename for this subject
+    filenames = {
+        "hand": sorted([str(p) for p in Path(path_hands).rglob("*.edf")]),
+        "feet": sorted([str(p) for p in Path(path_feet).rglob("*.edf")]),
+    }
+
+    return filenames
+
+def raw_info(raw):
+    raw.rename_channels(lambda x: x.strip("."))
+    raw.rename_channels(lambda x: x.upper())
+    # fmt: off
+    renames = {
+        "AFZ": "AFz", "PZ": "Pz", "FPZ": "Fpz", "FCZ": "FCz", "FP1": "Fp1", "CZ": "Cz",
+        "OZ": "Oz", "POZ": "POz", "IZ": "Iz", "CPZ": "CPz", "FP2": "Fp2", "FZ": "Fz",
+    }
+    # fmt: on
+    raw.rename_channels(renames)
+    raw.set_montage(mne.channels.make_standard_montage("standard_1005"))
+    return raw
+
+subject_raws = _load_subject_raw(dataset, subject, hand_runs, feet_runs, preload=True) #loads the raw data for this subject by loading the downloaded .edf files
+
+raw = subject_raws['hand'][0] 
+data = raw.get_data() #this has shape (64, 20000) for 64 channels and 2minutes of data at 160Hz sampling rate
 
 
-raw = dataset._load_one_run(subject, run)
-
-
-montage = raw.get_montage()
-
-positions = montage.get_positions()
-
-
-pos_2d = {}
-
-for ch_name in positions["ch_pos"]:
-    pos = positions["ch_pos"][ch_name]
-    pos_2d[ch_name] = np.array(pos[:2])  # Take only x and y coordinates
-
-#---------------------------
-#Construct adjacency matrix from 2D positions using k-NN graph
-ch_names = list(pos_2d.keys())
-coords_2d = np.array([pos_2d[ch] for ch in ch_names])
-A = kneighbors_graph(coords_2d, n_neighbors=8, mode='connectivity', include_self=False).toarray()
-
-
-def get_global_adjacency_matrix(A, name11,name12,name21,name22,name31,name32): #accounts for global connections
-    for i in range(len(ch_names)):
-        if ch_names[i]==name11:
-            idx11=i
-        if ch_names[i]==name12:
-            idx12=i
-        if ch_names[i]==name21:
-            idx21=i
-        if ch_names[i]==name22:
-            idx22=i
-        if ch_names[i]==name31:
-            idx31=i
-        if ch_names[i]==name32:
-            idx32=i
-    A[idx11,idx12]=1
-    A[idx12,idx11]=1
-    A[idx21,idx22]=1
-    A[idx22,idx21]=1
-    A[idx31,idx32]=1
-    A[idx32,idx31]=1
-    return A
+def get_adjacency_matrix(raw, n_neighbors=8):
+    montage = raw.get_montage()
+    positions = montage.get_positions()
+    pos_2d = {ch_name: np.array(pos[:2]) for ch_name, pos in positions["ch_pos"].items()}
+    ch_names = list(pos_2d.keys())
+    coords_2d = np.array([pos_2d[ch] for ch in ch_names])
+    A = kneighbors_graph(coords_2d, n_neighbors=n_neighbors, mode='connectivity', include_self=False).toarray()
     
-
-adj_matrix = get_global_adjacency_matrix(A, "FC3", "FC4", "C3", "C4", "CP3", "CP4") #example of adding global connections between homologous regions
-print("Adjacency matrix shape:", adj_matrix.shape)
-print("Connections for FC5:", adj_matrix[ch_names.index("FC5")]) #prints the connections for FC5 electrode which is the first channel. Row 1 of the adjacency matrix with each corresponding column. Therefore there are 64 electrodes and 64 values in this row. A value of 1 indicates a connection to that electrode, while a value of 0 indicates no connection.
-
-
-# Convert dense adjacency matrix to edge_index and edge_weight format for PyTorch Geometric
-A_matrix = torch.tensor(adj_matrix, dtype=torch.float32)  
-edge_index, edge_weight = dense_to_sparse(A_matrix) 
-
-
-class SAGPool(nn.Module):
-    def __init__(self, in_channels, ratio=0.8, Conv=GCNConv, non_linearity=torch.tanh):
-        super().__init__()
-        self.in_channels = in_channels
-        self.ratio = ratio
-        self.score_layer = Conv(in_channels, 1)
-        self.non_linearity = non_linearity
-
-    def forward(self, x, edge_index, edge_attr=None, batch=None):
-        score = self.score_layer(x, edge_index).squeeze(-1)  # (N,)
-
-        perm = topk(score, self.ratio, batch)
-        x = x[perm] * self.non_linearity(score[perm]).view(-1, 1)
-        batch = batch[perm]
-
-        edge_index, edge_attr = filter_adj(edge_index, edge_attr, perm, num_nodes=score.size(0))
-        return x, edge_index, edge_attr, batch
+    A_matrix = torch.tensor(A, dtype=torch.float32)  
+    edge_index, edge_weight = dense_to_sparse(A_matrix) #getting the edge_index matrix of size (2, num_of_edges) and edge weight vector of size (num_of_edges)
+    
+    return A, edge_index, edge_weight 
 
 
 class GCNEncoder(nn.Module):
@@ -111,22 +93,18 @@ class GCNEncoder(nn.Module):
     - C  : electrodes (nodes per graph)
     - F  : Feature dim per electrode provided from CNN
     - Tp : Time dimension containing feature strengths over time
-
-    Treat each time slice as a separate graph by folding time into the batch dimension:
-      num_graphs = B * Tp, electrodes/nodes per graph = C
-    """
-    def __init__(self, nfeat: int, nhid: int, nout: int, dropout: float = 0.5, pool_ratio: float = 0.8):
+"""
+    def __init__(self, nfeat: int, nhid: int, nout: int, dropout: float = 0.5, pool_ratio: float = 0.9):
         super().__init__()
 
         self.gc1 = GCNConv(nfeat, nhid)
         self.bn1 = nn.BatchNorm1d(nhid)
         self.rel1 = nn.PReLU()
-        self.pool1 = SAGPool(nhid, ratio=pool_ratio, Conv=GCNConv)
+        self.pool1 = SAGPooling(nhid, ratio=pool_ratio, GNN=GCNConv) #check the batching here. With custom its Conv not GNN
 
         self.gc2 = GCNConv(nhid, nout)
         self.bn2 = nn.BatchNorm1d(nout)
         self.rel2 = nn.PReLU()
-        self.pool2 = SAGPool(nout, ratio=pool_ratio, Conv=GCNConv)
 
         self.drop = nn.Dropout(p=dropout)
     
@@ -149,35 +127,32 @@ class GCNEncoder(nn.Module):
         B, C, F, Tp = h.shape
         num_graphs = B * Tp
 
-        # Fold time into batch: (B, C, F, Tp) -> (B, Tp, C, F) -> (B*Tp*C, F)
-        # PyG expects (n_out, F) therefore collapsing time and electrodes into channels
         x = h.permute(0, 3, 1, 2).contiguous().view(num_graphs * C, F)
 
         batch = torch.arange(num_graphs, device=h.device, dtype=torch.long).repeat_interleave(C)
 
-        # disjoint-union adjacency for all graphs in this forward
         edge_index_big, edge_weight_big = self._repeat_fixed_graph(edge_index, edge_weight, num_graphs, C)
 
         # ----- Block 1 -----
         x = self.gc1(x, edge_index_big, edge_weight=edge_weight_big)
         x = self.bn1(x)
         x = self.rel1(x)
-        x, edge_index_big, edge_weight_big, batch = self.pool1(
+        x, edge_index_big, edge_weight_big, batch, perm, score = self.pool1(
             x, edge_index_big, edge_attr=edge_weight_big, batch=batch
-        )
+        ) #check the batching here
         x = self.drop(x)
 
         # ----- Block 2 -----
         x = self.gc2(x, edge_index_big, edge_weight=edge_weight_big)
         x = self.bn2(x)
         x = self.rel2(x)
-        x, edge_index_big, edge_weight_big, batch = self.pool2(
-            x, edge_index_big, edge_attr=edge_weight_big, batch=batch
-        )
+        
         x = self.drop(x)
 
        
-        z = global_mean_pool(x, batch)   
-        z_seq = z.view(B, Tp, -1)        
+        z = global_mean_pool(x, batch)
+        features = z.size(-1)   
+        z_seq = z.view(B, Tp, features) 
+        z_seq = z_seq.permute(0, 2, 1).contiguous() #permute to (B, features, Tp) for consistency with Bendr       
 
         return x, z_seq
