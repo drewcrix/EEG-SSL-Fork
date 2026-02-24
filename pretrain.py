@@ -106,7 +106,7 @@ class ClusterLabelDataset(Dataset):
         eeg = sample[0] if isinstance(sample, (tuple, list)) else sample
         return eeg, torch.tensor(self._labels[idx], dtype=torch.long)
 
-def adjacency_bids(dataset, subject): #set the montage for specific dataset and subject passed through here
+def adjacency_bids(dataset, subject): #computed adjacency matrix here and passed through GNNencoder. Sets the montage based on the standard size and then the associated channels. Same accross subjects
     base_dir = Path(__file__).parent
     dataset_dir = os.path.join(base_dir, f"data/on/{dataset}")
     subject_dir = os.path.join(dataset_dir, f"{subject}")
@@ -210,8 +210,6 @@ if __name__ == '__main__':
     training, validation, target_thinkers, edge_index, edge_weight = load_datasets(
         experiment, label_dict=label_dict, epoch_len=epoch_len, use_to1020=use_to1020, use_GNN=use_GNN)
 
-    #To1020 gives 21 channels (EEG_20_div + 1), update this when GNN encoder is in
-
     cnn = CNNEncoder(
       output_channels=max(1, args.hidden_size // 4),
       kernel_sizes=(128, 64, 32),
@@ -234,7 +232,7 @@ if __name__ == '__main__':
             self.cnn = cnn
             self.gnn = gnn
             self.encoder_h = encoder_h
-            self.edge_index = None    # will be set after construction
+            self.edge_index = None    
             self.edge_weight = None
 
         def forward(self, x):
@@ -252,8 +250,8 @@ if __name__ == '__main__':
             return f"CNN+GNN Encoder | sfreq={sfreq} | samples={samples} | hidden={self.encoder_h}"
 
     encoder = Encoder(cnn, gnn, encoder_h=args.hidden_size)
-    encoder.edge_index = edge_index    # edge_index already exists from load_datasets above
-    encoder.edge_weight = edge_weight  # same
+    encoder.edge_index = edge_index    
+    encoder.edge_weight = edge_weight  
       
     tqdm.tqdm.write(encoder.description(
         getattr(experiment, 'global_sfreq', 256),
