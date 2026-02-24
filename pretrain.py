@@ -139,7 +139,7 @@ def adjacency_bids(dataset, subject): #set the montage for specific dataset and 
 
     return edge_index, edge_weight
 
-def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=False, GNN=True):
+def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=False, use_GNN=True):
     #To1020 maps all electrode layouts to the standard 21-channel 10-20 montage
     #ConvEncoderBENDR needs exactly 21 channels, remove this once GNN encoder is in
     training       = []
@@ -152,7 +152,7 @@ def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=False,
 
         if use_to1020:
             dataset.add_transform(To1020())
-        elif GNN:
+        elif use_GNN:
             subj = "sub-001"
             edge_index, edge_weight = adjacency_bids(name, subj)
 
@@ -208,7 +208,7 @@ if __name__ == '__main__':
     use_to1020 = not args.no_to1020
 
     training, validation, target_thinkers, edge_index, edge_weight = load_datasets(
-        experiment, label_dict=label_dict, epoch_len=epoch_len, use_to1020=use_to1020)
+        experiment, label_dict=label_dict, epoch_len=epoch_len, use_to1020=use_to1020, use_GNN=use_GNN)
 
     #To1020 gives 21 channels (EEG_20_div + 1), update this when GNN encoder is in
 
