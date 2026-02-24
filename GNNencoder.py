@@ -60,6 +60,8 @@ class GCNEncoder(nn.Module):
     def __init__(self, nfeat: int, nhid: int, nout: int, dropout: float = 0.5, pool_ratio: float = 0.9):
         super().__init__()
 
+        _, edge_index, edge_weight = adjacency_bids(dataset_name, subject)
+
         self.gc1 = GCNConv(nfeat, nhid)
         self.bn1 = nn.BatchNorm1d(nhid)
         self.rel1 = nn.PReLU()
