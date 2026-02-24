@@ -1,17 +1,20 @@
-import numpy as np
+import os
+import json
+import math
+import time
 import warnings
+
+import mne
+import numpy as np
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from pathlib import Path
 from typing import Tuple
-import torch
-import time 
-from moabb.datasets.physionet_mi import PhysionetMI
-import matplotlib.pyplot as plt
 from sklearn.neighbors import kneighbors_graph
-start = time.time()
-warnings.filterwarnings("ignore")  # Ignore warnings for cleaner output
-import math
+
+warnings.filterwarnings("ignore")
 
 from torch_geometric.nn import GCNConv
 from torch_geometric.nn import global_mean_pool
@@ -91,3 +94,7 @@ class GCNEncoder(nn.Module):
         z_seq = z_seq.permute(0, 2, 1).contiguous() #permute to (B, features, Tp) for consistency with Bendr       
 
         return x, z_seq
+
+
+if __name__ == "__main__":
+    print("GCNEncoder loaded OK")

@@ -4,7 +4,7 @@ pretrain.py
 Original BENDR pretraining with our task-aware cluster loss added on top.
 Without a label file this is identical to vanilla BENDR.
 
-Pipeline: downloader.py -> task_switch_identifi.py -> gen_labels.py -> HERE
+Pipeline: downloader.py to task_switch_identifi.py to gen_labels.py to HERE
 
 New things added vs original:
   - ClusterLabelDataset: wraps DN3 datasets to append cluster IDs to each batch item
@@ -27,11 +27,15 @@ from dn3.configuratron import ExperimentConfig
 from dn3.transforms.instance import To1020
 from dn3.transforms.batch import RandomTemporalCrop
 from gen_labels import load_label_file, epoch_label
+<<<<<<< Updated upstream
 from GNNencoder import GCNEncoder
 from CNNencoder import CNNEncoder
 from torch_geometric.utils import dense_to_sparse
 from sklearn.neighbors import kneighbors_graph
 from pathlib import Path
+=======
+
+>>>>>>> Stashed changes
 from torch.utils.data import ConcatDataset, Dataset
 
 import mne
@@ -171,7 +175,18 @@ def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=False,
 
     print("Training BENDR using {} people's data across {} datasets.".format(
         total_thinkers, len(training)))
+<<<<<<< Updated upstream
     return ConcatDataset(training), validation, total_thinkers, edge_index, edge_weight
+=======
+
+    if len(training) == 0:
+        raise RuntimeError(
+            "No training datasets found. "
+            "Check that your config's dataset paths exist and that 'validation_dataset' "
+            "isn't set to the only dataset in the config.")
+
+    return ConcatDataset(training), validation, total_thinkers
+>>>>>>> Stashed changes
 
 
 def parse_args():
@@ -210,6 +225,7 @@ if __name__ == '__main__':
     training, validation, target_thinkers, edge_index, edge_weight = load_datasets(
         experiment, label_dict=label_dict, epoch_len=epoch_len, use_to1020=use_to1020, use_GNN=use_GNN)
 
+<<<<<<< Updated upstream
     cnn = CNNEncoder(
       output_channels=max(1, args.hidden_size // 4),
       kernel_sizes=(128, 64, 32),
@@ -253,6 +269,11 @@ if __name__ == '__main__':
     encoder.edge_index = edge_index    
     encoder.edge_weight = edge_weight  
       
+=======
+    #To1020 gives 21 channels (EEG_20_div + 1), update this when GNN encoder is in
+    n_channels = len(To1020.EEG_20_div) + 1
+    encoder = ConvEncoderBENDR(n_channels, encoder_h=args.hidden_size)
+>>>>>>> Stashed changes
     tqdm.tqdm.write(encoder.description(
         getattr(experiment, 'global_sfreq', 256),
         getattr(experiment, 'global_samples', 2560)))
@@ -274,8 +295,12 @@ if __name__ == '__main__':
 
     tqdm.tqdm.write(process.description(getattr(experiment, 'global_samples', 2560)))
 
+    # DN3 config objects carry internal _-prefixed keys, strip them before unpacking
+    def _cfg(obj):
+        return {k: v for k, v in vars(obj).items() if not k.startswith('_')}
+
     process.set_optimizer(
-        torch.optim.Adam(process.parameters(), **experiment.optimizer_params))
+        torch.optim.Adam(process.parameters(), **_cfg(experiment.optimizer_params)))
     process.add_batch_transform(
         RandomTemporalCrop(max_crop_frac=experiment.augmentation_params.batch_crop_frac))
 
@@ -306,9 +331,10 @@ if __name__ == '__main__':
                 validation_dataset = validation,
                 resume_epoch       = args.resume,
                 log_callback       = simple_checkpoint,
-                **experiment.training_params)
+                **_cfg(experiment.training_params))
 
-    print(process.evaluate(validation))
+    if validation is not None:
+        print(process.evaluate(validation))
 
     if not args.no_save:
         tqdm.tqdm.write("Saving best model...")
