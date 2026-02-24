@@ -1,6 +1,7 @@
 conda create --name eeg-ssl python==3.9
 source activate base
 conda activate eeg-ssl
+source activate eeg-ssl
 
 conda install -c conda-forge datalad
 pip install -r requirements.txt
