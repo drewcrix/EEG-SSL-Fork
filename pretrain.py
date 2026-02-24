@@ -27,15 +27,11 @@ from dn3.configuratron import ExperimentConfig
 from dn3.transforms.instance import To1020
 from dn3.transforms.batch import RandomTemporalCrop
 from gen_labels import load_label_file, epoch_label
-<<<<<<< Updated upstream
 from GNNencoder import GCNEncoder
 from CNNencoder import CNNEncoder
 from torch_geometric.utils import dense_to_sparse
 from sklearn.neighbors import kneighbors_graph
 from pathlib import Path
-=======
-
->>>>>>> Stashed changes
 from torch.utils.data import ConcatDataset, Dataset
 
 import mne
@@ -143,12 +139,12 @@ def adjacency_bids(dataset, subject): #computed adjacency matrix here and passed
 
     return edge_index, edge_weight
 
-def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=False, use_GNN=True):
-    #To1020 maps all electrode layouts to the standard 21-channel 10-20 montage
-    #ConvEncoderBENDR needs exactly 21 channels, remove this once GNN encoder is in
+def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=True, use_GNN=False):
     training       = []
     validation     = None
     total_thinkers = 0
+    edge_index     = None
+    edge_weight    = None
 
     for name, ds in experiment.datasets.items():
         print("Constructing " + name)
@@ -175,9 +171,6 @@ def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=False,
 
     print("Training BENDR using {} people's data across {} datasets.".format(
         total_thinkers, len(training)))
-<<<<<<< Updated upstream
-    return ConcatDataset(training), validation, total_thinkers, edge_index, edge_weight
-=======
 
     if len(training) == 0:
         raise RuntimeError(
@@ -185,8 +178,10 @@ def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=False,
             "Check that your config's dataset paths exist and that 'validation_dataset' "
             "isn't set to the only dataset in the config.")
 
-    return ConcatDataset(training), validation, total_thinkers
->>>>>>> Stashed changes
+    # edge_index/edge_weight are None when not using GNN (e.g. test runs with To1020)
+    _ei = edge_index if use_GNN else None
+    _ew = edge_weight if use_GNN else None
+    return ConcatDataset(training), validation, total_thinkers, _ei, _ew
 
 
 def parse_args():
@@ -203,9 +198,10 @@ def parse_args():
                         help="cluster_labels.npy from gen_labels.py. Activates cluster loss.")
     parser.add_argument('--num-clusters', default=3, type=int,
                         help="Should match what gen_labels.py was run with.")
-    #flip this when GNN encoder is ready and To1020 can come out
     parser.add_argument('--no-to1020', action='store_true',
-                        help="Skip To1020 remapping, only needed for GNN encoder (future).")
+                        help="Skip To1020 remapping. Required when using --use-gnn.")
+    parser.add_argument('--use-gnn', action='store_true',
+                        help="Use CNN+GNN encoder instead of ConvEncoderBENDR.")
     return parser.parse_args()
 
 
@@ -220,60 +216,59 @@ if __name__ == '__main__':
         label_dict = load_label_file(args.label_file)
 
     epoch_len  = getattr(experiment, 'global_samples', 256 * 10)
-    use_to1020 = not args.no_to1020
+    use_GNN    = args.use_gnn
+    use_to1020 = not args.no_to1020 and not use_GNN  # GNN handles its own channels
 
     training, validation, target_thinkers, edge_index, edge_weight = load_datasets(
         experiment, label_dict=label_dict, epoch_len=epoch_len, use_to1020=use_to1020, use_GNN=use_GNN)
 
-<<<<<<< Updated upstream
-    cnn = CNNEncoder(
-      output_channels=max(1, args.hidden_size // 4),
-      kernel_sizes=(128, 64, 32),
-      pool_sizes=(5, 3, 2),
-      dropout=0.5,
-      stride=1,
-      padding="same",
-    )
-    gnn = GCNEncoder(
-      nfeat=cnn.F,
-      nhid=args.hidden_size,   
-      nout=args.hidden_size,
-      dropout=getattr(experiment, "dropout", 0.5),
-      pool_ratio=0.9,
-    )
+    if use_GNN:
+        cnn = CNNEncoder(
+            output_channels=max(1, args.hidden_size // 4),
+            kernel_sizes=(128, 64, 32),
+            pool_sizes=(5, 3, 2),
+            dropout=0.5,
+            stride=1,
+            padding="same",
+        )
+        gnn = GCNEncoder(
+            nfeat=cnn.F,
+            nhid=args.hidden_size,
+            nout=args.hidden_size,
+            dropout=getattr(experiment, "dropout", 0.5),
+            pool_ratio=0.9,
+        )
 
-    class Encoder(torch.nn.Module):
-        def __init__(self, cnn, gnn, encoder_h):
-            super().__init__()
-            self.cnn = cnn
-            self.gnn = gnn
-            self.encoder_h = encoder_h
-            self.edge_index = None    
-            self.edge_weight = None
+        class Encoder(torch.nn.Module):
+            def __init__(self, cnn, gnn, encoder_h):
+                super().__init__()
+                self.cnn = cnn
+                self.gnn = gnn
+                self.encoder_h = encoder_h
+                self.edge_index  = None
+                self.edge_weight = None
 
-        def forward(self, x):
-            h = self.cnn(x)
-            _, z_seq = self.gnn(h, self.edge_index, self.edge_weight)
-            return z_seq
+            def forward(self, x):
+                h = self.cnn(x)
+                _, z_seq = self.gnn(h, self.edge_index, self.edge_weight)
+                return z_seq
 
-        def save(self, path):
-            torch.save(self.state_dict(), path)
+            def save(self, path):
+                torch.save(self.state_dict(), path)
 
-        def load(self, path):
-            self.load_state_dict(torch.load(path))
+            def load(self, path):
+                self.load_state_dict(torch.load(path))
 
-        def description(self, sfreq, samples):
-            return f"CNN+GNN Encoder | sfreq={sfreq} | samples={samples} | hidden={self.encoder_h}"
+            def description(self, sfreq, samples):
+                return f"CNN+GNN Encoder | sfreq={sfreq} | samples={samples} | hidden={self.encoder_h}"
 
-    encoder = Encoder(cnn, gnn, encoder_h=args.hidden_size)
-    encoder.edge_index = edge_index    
-    encoder.edge_weight = edge_weight  
-      
-=======
-    #To1020 gives 21 channels (EEG_20_div + 1), update this when GNN encoder is in
-    n_channels = len(To1020.EEG_20_div) + 1
-    encoder = ConvEncoderBENDR(n_channels, encoder_h=args.hidden_size)
->>>>>>> Stashed changes
+        encoder = Encoder(cnn, gnn, encoder_h=args.hidden_size)
+        encoder.edge_index  = edge_index
+        encoder.edge_weight = edge_weight
+    else:
+        # default: ConvEncoderBENDR with To1020 fixed 21 channels
+        n_channels = len(To1020.EEG_20_div) + 1
+        encoder = ConvEncoderBENDR(n_channels, encoder_h=args.hidden_size)
     tqdm.tqdm.write(encoder.description(
         getattr(experiment, 'global_sfreq', 256),
         getattr(experiment, 'global_samples', 2560)))
