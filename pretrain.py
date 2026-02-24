@@ -17,6 +17,10 @@ import torch
 import tqdm
 import argparse
 import numpy as np
+import pandas as pd
+import os
+import glob
+import json
 
 from dn3_ext import NEWBendingCollegeWav2Vec, ConvEncoderBENDR, BENDRContextualizer
 from dn3.configuratron import ExperimentConfig
@@ -25,7 +29,9 @@ from dn3.transforms.batch import RandomTemporalCrop
 from gen_labels import load_label_file, epoch_label
 from GNNencoder import GCNEncoder
 from CNNencoder import CNNEncoder
-
+from torch_geometric.utils import dense_to_sparse
+from sklearn.neighbors import kneighbors_graph
+from pathlib import Path
 from torch.utils.data import ConcatDataset, Dataset
 
 import mne
@@ -100,8 +106,40 @@ class ClusterLabelDataset(Dataset):
         eeg = sample[0] if isinstance(sample, (tuple, list)) else sample
         return eeg, torch.tensor(self._labels[idx], dtype=torch.long)
 
+def adjacency_bids(dataset, subject): #set the montage for specific dataset and subject passed through here
+    base_dir = Path(__file__).parent
+    dataset_dir = os.path.join(base_dir, f"data/on/{dataset}")
+    subject_dir = os.path.join(dataset_dir, f"{subject}")
+                               
+    search_json = os.path.join(subject_dir, "**", "*.json")
+    search_tsv  = os.path.join(subject_dir, "**", "eeg", "*_channels.tsv")
 
-def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=True):
+    tsv_files  = glob.glob(search_tsv, recursive=True)
+    json_files = glob.glob(search_json, recursive=True)
+    
+    with open(json_files[0], "r") as f:
+        meta = json.load(f)
+    
+    scheme = (meta.get("EEGPlacementScheme") or "").lower()
+    montage_name = "standard_1020" if "10-20" in scheme or "1020" in scheme else "standard_1005"
+
+    montage = mne.channels.make_standard_montage(montage_name)
+    pos = montage.get_positions()["ch_pos"]
+
+    df = pd.read_csv(tsv_files[0], sep="\t")
+    ch_names = df["name"].dropna().astype(str).tolist()
+    
+    coords_2d = np.array([[pos[ch][0], pos[ch][1]] for ch in ch_names if ch in pos], dtype=float)
+    kept_names = [ch for ch in ch_names if ch in pos]
+    
+    A = kneighbors_graph(coords_2d, n_neighbors=min(8, len(kept_names)-1),
+                         mode="connectivity", include_self=True).toarray()
+    A_matrix = torch.tensor(A, dtype=torch.float32)  
+    edge_index, edge_weight = dense_to_sparse(A_matrix)
+
+    return edge_index, edge_weight
+
+def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=False, GNN=True):
     #To1020 maps all electrode layouts to the standard 21-channel 10-20 montage
     #ConvEncoderBENDR needs exactly 21 channels, remove this once GNN encoder is in
     training       = []
@@ -114,6 +152,9 @@ def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=True):
 
         if use_to1020:
             dataset.add_transform(To1020())
+        elif GNN:
+            subj = "sub-001"
+            edge_index, edge_weight = adjacency_bids(name, subj)
 
         is_validation = (hasattr(experiment, 'validation_dataset') and
                          experiment.validation_dataset == name)
@@ -130,7 +171,7 @@ def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=True):
 
     print("Training BENDR using {} people's data across {} datasets.".format(
         total_thinkers, len(training)))
-    return ConcatDataset(training), validation, total_thinkers
+    return ConcatDataset(training), validation, total_thinkers, edge_index, edge_weight
 
 
 def parse_args():
@@ -166,14 +207,11 @@ if __name__ == '__main__':
     epoch_len  = getattr(experiment, 'global_samples', 256 * 10)
     use_to1020 = not args.no_to1020
 
-    training, validation, target_thinkers = load_datasets(
+    training, validation, target_thinkers, edge_index, edge_weight = load_datasets(
         experiment, label_dict=label_dict, epoch_len=epoch_len, use_to1020=use_to1020)
 
     #To1020 gives 21 channels (EEG_20_div + 1), update this when GNN encoder is in
-    n_channels = len(To1020.EEG_20_div) + 1
 
-    #encoder = CNNEncoder(n_channels, encoder_h=args.hidden_size) #replaced ConvEncoderBENDR with CNNEncoder (no spatial mixing, purely temporal)
-  
     cnn = CNNEncoder(
       output_channels=max(1, args.hidden_size // 4),
       kernel_sizes=(128, 64, 32),
@@ -201,6 +239,8 @@ if __name__ == '__main__':
         h = self.cnn(x)  
         x, z_seq = self.gnn(h) #returns (x_nodes, z_seq), z_seq in dimension (B, F, T)
         return z_seq  
+
+    encoder = Encoder(cnn, gnn, encoder_h=args.hidden_size)
       
     tqdm.tqdm.write(encoder.description(
         getattr(experiment, 'global_sfreq', 256),
