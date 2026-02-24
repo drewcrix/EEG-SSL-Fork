@@ -82,8 +82,8 @@ datasets:
       FT9: "*T1*"
       FT10: "*T2*"
     exclude_channels: !include configs/tueg_channel_exclusions.yml
-    # Uncomment below if you want to exclude trials with extreme values (e.g. channels with 0 or noisy values)
-#    exclude: !include configs/tueg_v1_2_bad_trial_rejection.yml
+    #  Uncomment below if you want to exclude trials with extreme values (e.g. channels with 0 or noisy values)
+    #  exclude: !include configs/tueg_v1_2_bad_trial_rejection.yml
     #  load_onthefly: True
     picks:
       - eeg

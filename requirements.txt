@@ -1,0 +1,22 @@
+--extra-index-url https://download.pytorch.org/whl/cu126
+
+numpy>=1.17.4,<1.20
+scipy
+matplotlib
+pandas
+
+mne
+mne-bids
+
+joblib
+parse
+
+pyyaml==5.3.1
+pyyaml-include==1.2
+
+tqdm
+
+torch 
+torchvision
+
+moabb
