@@ -229,18 +229,31 @@ if __name__ == '__main__':
     )
 
     class Encoder(torch.nn.Module):
-      def __init__(self, cnn, gnn, encoder_h):
-        super().__init__()
-        self.cnn = cnn
-        self.gnn = gnn
-        self.encoder_h = encoder_h  
+        def __init__(self, cnn, gnn, encoder_h):
+            super().__init__()
+            self.cnn = cnn
+            self.gnn = gnn
+            self.encoder_h = encoder_h
+            self.edge_index = None    # will be set after construction
+            self.edge_weight = None
 
-      def forward(self, x):
-        h = self.cnn(x)  
-        x, z_seq = self.gnn(h) #returns (x_nodes, z_seq), z_seq in dimension (B, F, T)
-        return z_seq  
+        def forward(self, x):
+            h = self.cnn(x)
+            _, z_seq = self.gnn(h, self.edge_index, self.edge_weight)
+            return z_seq
+
+        def save(self, path):
+            torch.save(self.state_dict(), path)
+
+        def load(self, path):
+            self.load_state_dict(torch.load(path))
+
+        def description(self, sfreq, samples):
+            return f"CNN+GNN Encoder | sfreq={sfreq} | samples={samples} | hidden={self.encoder_h}"
 
     encoder = Encoder(cnn, gnn, encoder_h=args.hidden_size)
+    encoder.edge_index = edge_index    # edge_index already exists from load_datasets above
+    encoder.edge_weight = edge_weight  # same
       
     tqdm.tqdm.write(encoder.description(
         getattr(experiment, 'global_sfreq', 256),
