@@ -19,35 +19,6 @@ from torch_geometric.utils import dense_to_sparse
 from torch_geometric.nn import SAGPooling
 from torch.nn import Parameter
 
-def adjacency_bids(dataset, subject): #set the montage for specific dataset and subject passed through here
-    base_dir = Path(__file__).parent
-    dataset_dir = os.path.join(base_dir, f"data/on/{dataset}")
-    subject_dir = os.path.join(dataset_dir, f"{subject}")
-                               
-    search_json = os.path.join(subject_dir, "**", "*.json")
-    json_files = glob.glob(search_json, recursive=True)
-    
-    with open(json_files, "r") as f:
-        meta = json.load(f)
-    
-    scheme = (meta.get("EEGPlacementScheme") or "").lower()
-    montage_name = "standard_1020" if "10-20" in scheme or "1020" in scheme else "standard_1005"
-
-    montage = mne.channels.make_standard_montage(montage_name)
-    pos = montage.get_positions()["ch_pos"]
-    
-    coords_2d = np.array([[pos[ch][0], pos[ch][1]] for ch in ch_names if ch in pos], dtype=float)
-    kept_names = [ch for ch in ch_names if ch in pos]
-    
-    A = kneighbors_graph(coords_2d, n_neighbors=min(8, len(kept_names)-1),
-                         mode="connectivity", include_self=True).toarray()
-    A_matrix = torch.tensor(A, dtype=torch.float32)  
-    edge_index, edge_weight = dense_to_sparse(A_matrix)
-
-    return A_matrix, edge_index, edge_weight
-
- #this has shape (64, 20000) for 64 channels and 2minutes of data at 160Hz sampling rate 
-
 class GCNEncoder(nn.Module):
     """
     GNN encoder for CNN output shaped (B, C, F, Tp).
@@ -60,7 +31,6 @@ class GCNEncoder(nn.Module):
     def __init__(self, nfeat: int, nhid: int, nout: int, dropout: float = 0.5, pool_ratio: float = 0.9):
         super().__init__()
 
-        _, edge_index, edge_weight = adjacency_bids(dataset_name, subject)
 
         self.gc1 = GCNConv(nfeat, nhid)
         self.bn1 = nn.BatchNorm1d(nhid)
