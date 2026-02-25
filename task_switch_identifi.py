@@ -20,6 +20,9 @@ import mne
 from mne_bids import BIDSPath, read_raw_bids
 import json
 
+from tqdm import tqdm
+from glob import glob
+
 
 """
 Step 1: Use Bartholomew's distance to identify potential task switching points.
@@ -384,51 +387,53 @@ def generate_task_switch_file(path='./on', sfreq=256, BIDS_export_path = "task_s
     search_target = os.path.abspath(os.path.join(base_directory, path))
     
     all_results = []
-    
-    #If want to use absolute path, use the following code, if want to use relative path, use the "path "instead of "search_target"
-    for root, directory, files in os.walk(search_target):
-        for each_file in files:
-            if each_file.endswith((".edf", ".bdf", ".set", ".fif")):
-                #Get the full path of the dataset file
-                abs_file_path = os.path.join(root, each_file)
 
-                #Get the relative path of the dataset file for saving the "name"
-                relative_path = os.path.relpath(abs_file_path, base_directory)
+    # Find all the eeg files
+    search_pattern = os.path.join(search_target, "**/eeg/*.edf")
+    eeg_files = glob(search_pattern, recursive=True)
                 
-                try: 
-                    #Loding data
-                        #Assume data are already been preprocessing
-                    raw_data = mne.io.read_raw(abs_file_path, preload=True, verbose=False)
-                    
-                    #Resample if the sfreq isn't the number we want
-                    if raw_data.info['sfreq'] != sfreq:
-                        raw_data = raw_data.resample(sfreq)
-                        
-                    #Trans eeg data to pandasdataframe
-                    df_eeg = raw_data.to_data_frame(picks='eeg')
-                    
-                    #The index of eeg data in the list already contain the time information
-                    if 'time' in df_eeg.columns:
-                        df_eeg = df_eeg.drop(columns=['time'])
-                    
-                    #Using the function. 
-                    candidates = detect_task_switch_by_bhattacharyya_with_better_CPU(df_eeg, sfreq=sfreq)
-                    smooth_gfp = calculate_GFP(df_eeg, sfreq=sfreq)
-                    verified_at_segments = verify_alpha_theta_2(df_eeg, candidates, sfreq=sfreq)
-                    final_segments = gfp_check(verified_at_segments, smooth_gfp, sfreq=sfreq)
 
-                    if len(final_segments) > 1:
-                        after_merge = merge_back_to_back(final_segments)
-                    else:
-                        after_merge = final_segments
+    print("Found", len(eeg_files), "files")
 
-                    all_results.append({
-                        "name": relative_path,
-                        "task_switch": after_merge
-                    })
-                    
-                except Exception as e:
-                    print(f"Error in {relative_path}: {e}")
+    # Read every EEG file
+    for abs_file_path in tqdm(eeg_files):
+        try: 
+            #Get the relative path of the dataset file for saving the "name"
+            relative_path = os.path.relpath(abs_file_path, base_directory)
+
+            #Loding data
+                #Assume data are already been preprocessing
+            raw_data = mne.io.read_raw(abs_file_path, preload=True, verbose=False)
+            
+            #Resample if the sfreq isn't the number we want
+            if raw_data.info['sfreq'] != sfreq:
+                raw_data = raw_data.resample(sfreq)
+                
+            #Trans eeg data to pandasdataframe
+            df_eeg = raw_data.to_data_frame(picks='eeg')
+            
+            #The index of eeg data in the list already contain the time information
+            if 'time' in df_eeg.columns:
+                df_eeg = df_eeg.drop(columns=['time'])
+            
+            #Using the function. 
+            candidates = detect_task_switch_by_bhattacharyya_with_better_CPU(df_eeg, sfreq=sfreq)
+            smooth_gfp = calculate_GFP(df_eeg, sfreq=sfreq)
+            verified_at_segments = verify_alpha_theta_2(df_eeg, candidates, sfreq=sfreq)
+            final_segments = gfp_check(verified_at_segments, smooth_gfp, sfreq=sfreq)
+
+            if len(final_segments) > 1:
+                after_merge = merge_back_to_back(final_segments)
+            else:
+                after_merge = final_segments
+
+            all_results.append({
+                "name": relative_path,
+                "task_switch": after_merge
+            })
+            
+        except Exception as e:
+            print(f"Error in {relative_path}: {e}")
     with open(BIDS_export_path, 'w') as f:
         json.dump(all_results, f, indent=4)
 
