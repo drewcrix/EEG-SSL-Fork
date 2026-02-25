@@ -241,16 +241,18 @@ def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=True, 
             safe_hz, safe_samples, suggested_lpf = safe_sfreq_for_dataset(
                 toplevel, target_sfreq=target_sfreq, epoch_secs=epoch_secs)
             if safe_hz is None:
-                print(f"  Skipping {name}: no readable EEG files found.")
-                continue
-            # patch sfreq/samples if we had to step up to avoid aliasing
-            if safe_hz != target_sfreq:
-                ds.sfreq    = safe_hz
-                ds.stride   = safe_samples
-                ds.samples  = safe_samples
-            # patch lpf when the EDF header lowpass would trigger DN3's aliasing guard
-            if suggested_lpf is not None and not hasattr(ds, 'lpf'):
-                ds.lpf = suggested_lpf
+                # couldn't read a sample file (e.g. git-annex not unlocked, path missing)
+                # don't skip — let DN3 attempt it and give its own error rather than silently dropping
+                print(f"  [safe_sfreq] Could not pre-scan {name}, proceeding anyway.")
+            else:
+                # patch sfreq/samples if we had to step up to avoid aliasing
+                if safe_hz != target_sfreq:
+                    ds.sfreq    = safe_hz
+                    ds.stride   = safe_samples
+                    ds.samples  = safe_samples
+                # patch lpf when the EDF header lowpass would trigger DN3's aliasing guard
+                if suggested_lpf is not None and not hasattr(ds, 'lpf'):
+                    ds.lpf = suggested_lpf
 
         dataset = ds.auto_construct_dataset()
 
@@ -277,10 +279,14 @@ def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=True, 
         total_thinkers, len(training)))
 
     if len(training) == 0:
+        paths = {n: getattr(ds, 'toplevel', 'unknown') for n, ds in experiment.datasets.items()}
         raise RuntimeError(
-            "No training datasets found. "
-            "Check that your config's dataset paths exist and that 'validation_dataset' "
-            "isn't set to the only dataset in the config.")
+            "No training datasets found. Things to check:\n"
+            f"  1. Dataset paths exist on this machine: {paths}\n"
+            "  2. 'validation_dataset' isn't set to the only dataset in the config.\n"
+            "  3. If using git-annex (datalad BIDS), run: git -C <dataset_path> annex unlock .\n"
+            "  4. If data is missing entirely, run: git -C <dataset_path> annex get ."
+        )
 
     # edge_index/edge_weight are None when not using GNN (e.g. test runs with To1020)
     _ei = edge_index if use_GNN else None
