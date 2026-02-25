@@ -1,14 +1,14 @@
 Configuratron:
   use_only:
-    - ds004504
     - ds003775
-    - ds007358
   samples: 2560   # 10 seconds at 256 Hz
   sfreq: 256
   deep1010:
     return_mask: True
 
-validation_dataset: ds007358
+# ds004504 removed - has pre-epoched .set files DN3 can't load as raw
+# ds007358 removed - didn't fully download
+# no validation split since we only have one dataset
 
 augmentation_params:
   upsample_crop: 32
@@ -41,26 +41,14 @@ bending_college_args:
   enc_feat_l2: 1.0
 
 datasets:
-  ds004504:
-    toplevel: ./on/ds004504
-    stride: 2560
-    data_max: 0.001
-    data_min: -0.001
-    picks:
-      - eeg
-
   ds003775:
     toplevel: ./on/ds003775
     stride: 2560
     data_max: 0.001
     data_min: -0.001
-    picks:
-      - eeg
-
-  ds007358:
-    toplevel: ./on/ds007358
-    stride: 2560
-    data_max: 0.001
-    data_min: -0.001
+    # lpf tells DN3 to apply a lowpass filter before loading, updating raw.info['lowpass']
+    # so the aliasing check (new_sfreq < 2*lowpass) passes: 256 < 2*45 = 90 is False
+    # the dataset is already bandpass filtered at 1-45 Hz so this is safe to re-apply
+    lpf: 45.0
     picks:
       - eeg
