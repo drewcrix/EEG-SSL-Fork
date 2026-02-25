@@ -14,12 +14,21 @@ import glob
 
 # List of openneuro dataset ids to download
 dataset_ids = [
-    "ds004504",
     "ds003775",
-    "ds007358"
-    ]
+    "ds007358",
+    "ds003810",
+    "ds004381",
+    "ds003555",
+    "ds004447",
+    "ds006317", 
+    "ds003029", 
+    "ds006914",
+    "ds005385",
+    "ds004011",
+    "ds004446"
+]
 
-base_path = os.path.abspath("./on")
+base_path = os.path.abspath("./data/open_neuro_datasets")
 os.makedirs(base_path, exist_ok=True)
 
 for ds_id in dataset_ids:

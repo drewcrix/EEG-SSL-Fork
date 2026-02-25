@@ -22,7 +22,7 @@ import json
 
 from tqdm import tqdm
 from glob import glob
-
+from scipy.fft import rfft as scipy_rfft
 
 """
 Step 1: Use Bartholomew's distance to identify potential task switching points.
@@ -53,13 +53,13 @@ def bhattacharyya_distance(psd1, psd2):
 def worker(i, eeg_data_numpy, window_len, sfreq):
     front_window = eeg_data_numpy[:, i-window_len:i]
     back_window = eeg_data_numpy[:, i:i+window_len]
-    
+
     _, psd_front = welch(front_window, fs=sfreq, nperseg=window_len)
     _, psd_back = welch(back_window, fs=sfreq, nperseg=window_len)
-    
+
     avg_psd_front = np.mean(psd_front, axis=0)
     avg_psd_back = np.mean(psd_back, axis=0)
-    
+
     return bhattacharyya_distance(avg_psd_front, avg_psd_back)
 
 
@@ -67,13 +67,12 @@ def detect_task_switch_by_bhattacharyya_with_better_CPU(eeg_data_frame, sfreq=25
     """
     Args:
         eeg_data_frame (_type_): pandas dataframe (Row: Time point, Column: EEG channel)
-        gfp (_type_): numpy array of every time point's gfp
         sfreq (int, optional): 256hz. Defaults to 256.
     return:
         A list of time points that may be task switch time point
     """
     entire_time_len = len(eeg_data_frame)
-    
+
     #use 40ms as the step length of window
     step_len = int(0.040 * sfreq)
     #use 500 ms as the window length
@@ -83,38 +82,39 @@ def detect_task_switch_by_bhattacharyya_with_better_CPU(eeg_data_frame, sfreq=25
     #Later use 10s (mean + 3SD) to filt
     baseline_len = int(10 * sfreq)
     
-    
-    #Trans pandas dataframe to numpy array to calculate quicker
-    #Filp to row is channels, column is time points
-    eeg_data_numpy = eeg_data_frame.values.T #Now the shape is (channel, time)
-    
-    #Do not use for loop anymore. 
-    task_indices = range(window_len, entire_time_len - window_len, step_len)
-    
-    bd_results = Parallel(n_jobs=-1)(
-        delayed(worker)(i, eeg_data_numpy, window_len, sfreq) 
-        for i in task_indices
-    )
-    
-    df_results = pd.DataFrame({
-        'time_point': list(task_indices),
-        'bd': bd_results
-    })
-    
+
+    # float32 halves memory bandwidth vs float64; (channels, time)
+    eeg_numpy = eeg_data_frame.values.T.astype(np.float32)
+    indices   = np.arange(window_len, entire_time_len - window_len, step_len)
+    S, C, W   = len(indices), eeg_numpy.shape[0], window_len
+
+    # --- materialise all windows ---
+    all_front = np.empty((S, C, W), dtype=np.float32)
+    all_back  = np.empty((S, C, W), dtype=np.float32)
+    for k, i in enumerate(indices):
+        all_front[k] = eeg_numpy[:, i - W: i]
+        all_back[k]  = eeg_numpy[:, i: i + W]
+
+    # Batch rfft
+    # welch with nperseg=W and no overlap == single-segment periodogram == |rfft|^2
+    psd_front = np.abs(scipy_rfft(all_front, axis=-1)) ** 2   # (S, C, F)
+    psd_back  = np.abs(scipy_rfft(all_back,  axis=-1)) ** 2
+
+    avg_f = psd_front.mean(axis=1)   # (S, F)
+    avg_b = psd_back.mean(axis=1)
+    avg_f /= avg_f.sum(axis=1, keepdims=True) + 1e-10
+    avg_b /= avg_b.sum(axis=1, keepdims=True) + 1e-10
+    bd_results = -np.log(np.sum(np.sqrt(avg_f * avg_b), axis=1) + 1e-10)
+
+    df_results = pd.DataFrame({'time_point': indices, 'bd': bd_results})
+
     window_count = baseline_len // step_len
-    
-    
     df_results['prev_mean'] = df_results['bd'].rolling(window=window_count).mean().shift(1)
-    df_results['prev_std'] = df_results['bd'].rolling(window=window_count).std().shift(1)
+    df_results['prev_std']  = df_results['bd'].rolling(window=window_count).std().shift(1)
     df_results['threshold'] = df_results['prev_mean'] + 3 * df_results['prev_std']
 
-    # Filtering: 
-    # 1. Time greater than 10 seconds; 
-    # 2. bd value exceeds the threshold.
     mask = (df_results['time_point'] >= baseline_len) & (df_results['bd'] > df_results['threshold'])
-    candidate_time_points = df_results.loc[mask, 'time_point'].tolist()
-    
-    return candidate_time_points
+    return df_results.loc[mask, 'time_point'].tolist()
 
 
 
@@ -401,10 +401,16 @@ def generate_task_switch_file(path='./on', sfreq=256, BIDS_export_path = "task_s
             #Get the relative path of the dataset file for saving the "name"
             relative_path = os.path.relpath(abs_file_path, base_directory)
 
+            tqdm.write(f"Reading \"{relative_path}\"...")
+
             #Loding data
                 #Assume data are already been preprocessing
             raw_data = mne.io.read_raw(abs_file_path, preload=True, verbose=False)
             
+            # print length of data and time estimate for this process
+            duration = raw_data.n_times / raw_data.info['sfreq']
+            tqdm.write(f"Finished reading and found {duration//60} minutes of recordings")
+
             #Resample if the sfreq isn't the number we want
             if raw_data.info['sfreq'] != sfreq:
                 raw_data = raw_data.resample(sfreq)
