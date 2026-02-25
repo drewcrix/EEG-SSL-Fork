@@ -16,8 +16,23 @@ pyyaml-include==1.2
 
 tqdm
 
-torch 
+torch
 torchvision
 torch_geometric
 
 moabb
+
+# graph neural network support
+torch-geometric
+torch-scatter
+torch-sparse
+
+# EEG/BIDS spatial processing
+scikit-learn
+
+# task switch detection and label generation
+datalad
+
+# suppress urllib3/requests version mismatch noise
+urllib3<2
+charset-normalizer<3

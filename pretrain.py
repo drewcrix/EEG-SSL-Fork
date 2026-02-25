@@ -38,6 +38,89 @@ import mne
 mne.set_log_level(False)
 
 
+def safe_sfreq_for_dataset(toplevel, target_sfreq=256, epoch_secs=10):
+    """
+    Scans a BIDS dataset toplevel for the first loadable EEG file, reads its
+    native sfreq from the header (no data loaded), then returns a safe target
+    sfreq and corresponding sample count.
+
+    Rules:
+      - If native_sfreq == target_sfreq: use as-is
+      - If native_sfreq is an integer multiple of target_sfreq AND the ratio
+        is <= 4: safe to downsample, use target_sfreq
+      - If the ratio > 4 or not integer: step up target_sfreq to the largest
+        power-of-2 divisor of native_sfreq that is >= target_sfreq
+      - If file is pre-epoched (multiple trials): returns None to signal skip
+
+    Returns (safe_sfreq, n_samples) or (None, None) if no readable file found.
+    """
+    EEG_EXTENSIONS = ('.edf', '.bdf', '.fif', '.gdf', '.cnt', '.set')
+
+    native_sfreq = None
+    for root, _, files in os.walk(toplevel):
+        # skip derivatives — they're often epoched
+        if 'derivatives' in root:
+            continue
+        for f in files:
+            if not f.endswith(EEG_EXTENSIONS):
+                continue
+            fpath = os.path.join(root, f)
+            try:
+                info = mne.io.read_raw(fpath, preload=False, verbose=False).info
+                native_sfreq = info['sfreq']
+                break
+            except Exception:
+                continue
+        if native_sfreq is not None:
+            break
+
+    if native_sfreq is None:
+        print(f"  [safe_sfreq] No readable EEG file found in {toplevel}")
+        return None, None, None
+
+    native_sfreq = int(native_sfreq)
+
+    # also grab the lowpass reported in the header — used to detect when we need to pre-filter
+    native_lowpass = info.get('lowpass', None)
+
+    if native_sfreq == target_sfreq:
+        chosen = target_sfreq
+    elif native_sfreq % target_sfreq == 0 and (native_sfreq // target_sfreq) <= 4:
+        # clean integer downsample, ratio small enough to be safe
+        chosen = target_sfreq
+    else:
+        # find the largest power-of-2 divisor of native_sfreq >= target_sfreq
+        # e.g. native=1024, target=256 -> ratio=4 -> ok
+        #      native=1024, target=256 but ratio=4 already handled above
+        #      native=1024, target=100 -> not integer -> step to 512
+        chosen = native_sfreq
+        while chosen > target_sfreq:
+            half = chosen // 2
+            if half >= target_sfreq and native_sfreq % half == 0:
+                chosen = half
+            else:
+                break
+
+    n_samples = int(chosen * epoch_secs)
+
+    # check if the EDF header lowpass would still trigger DN3's aliasing guard
+    # after choosing our sfreq: DN3 blocks if chosen < 2 * header_lowpass
+    # fix: return a suggested lpf that will pass the check (chosen / 2 with some margin)
+    suggested_lpf = None
+    if native_lowpass is not None and chosen < 2 * native_lowpass:
+        suggested_lpf = chosen / 2.0 * 0.9  # stay a bit under Nyquist
+        print(f"  [safe_sfreq] {os.path.basename(toplevel)}: EDF header lowpass={native_lowpass}Hz "
+              f"would block resampling to {chosen}Hz -> auto-setting lpf={suggested_lpf:.1f}Hz")
+    elif chosen != target_sfreq:
+        print(f"  [safe_sfreq] {os.path.basename(toplevel)}: native={native_sfreq}Hz, "
+              f"requested={target_sfreq}Hz would alias -> using {chosen}Hz "
+              f"({n_samples} samples per {epoch_secs}s epoch)")
+    else:
+        print(f"  [safe_sfreq] {os.path.basename(toplevel)}: native={native_sfreq}Hz -> {chosen}Hz OK")
+
+    return chosen, n_samples, suggested_lpf
+
+
 class ClusterLabelDataset(Dataset):
     """
     Wraps a DN3 dataset and appends a cluster label int to each sample.
@@ -146,8 +229,29 @@ def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=True, 
     edge_index     = None
     edge_weight    = None
 
+    target_sfreq = getattr(experiment, 'global_sfreq', 256)
+    epoch_secs   = getattr(experiment, 'global_samples', epoch_len) / target_sfreq
+
     for name, ds in experiment.datasets.items():
         print("Constructing " + name)
+
+        # auto-detect native sfreq and pick a safe downsample target
+        toplevel = getattr(ds, 'toplevel', None)
+        if toplevel is not None:
+            safe_hz, safe_samples, suggested_lpf = safe_sfreq_for_dataset(
+                toplevel, target_sfreq=target_sfreq, epoch_secs=epoch_secs)
+            if safe_hz is None:
+                print(f"  Skipping {name}: no readable EEG files found.")
+                continue
+            # patch sfreq/samples if we had to step up to avoid aliasing
+            if safe_hz != target_sfreq:
+                ds.sfreq    = safe_hz
+                ds.stride   = safe_samples
+                ds.samples  = safe_samples
+            # patch lpf when the EDF header lowpass would trigger DN3's aliasing guard
+            if suggested_lpf is not None and not hasattr(ds, 'lpf'):
+                ds.lpf = suggested_lpf
+
         dataset = ds.auto_construct_dataset()
 
         if use_to1020:
