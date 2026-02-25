@@ -18,5 +18,6 @@ tqdm
 
 torch 
 torchvision
+torch_geometric
 
 moabb

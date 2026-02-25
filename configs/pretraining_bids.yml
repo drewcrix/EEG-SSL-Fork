@@ -42,7 +42,7 @@ bending_college_args:
 
 datasets:
   ds004504:
-    toplevel: ./on/ds004504
+    toplevel: ./data/on/ds004504
     stride: 2560
     data_max: 0.001
     data_min: -0.001
@@ -50,7 +50,7 @@ datasets:
       - eeg
 
   ds003775:
-    toplevel: ./on/ds003775
+    toplevel: ./data/on/ds003775
     stride: 2560
     data_max: 0.001
     data_min: -0.001
@@ -58,7 +58,7 @@ datasets:
       - eeg
 
   ds007358:
-    toplevel: ./on/ds007358
+    toplevel: ./data/on/ds007358
     stride: 2560
     data_max: 0.001
     data_min: -0.001
