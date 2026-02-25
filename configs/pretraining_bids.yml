@@ -42,7 +42,7 @@ bending_college_args:
 
 datasets:
   ds003775:
-    toplevel: ./on/ds003775
+    toplevel: ./data/on/ds003775
     stride: 2560
     data_max: 0.001
     data_min: -0.001
