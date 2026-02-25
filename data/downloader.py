@@ -32,14 +32,19 @@ for ds_id in dataset_ids:
     print(f"Cloning {ds_id} metadata...")
     ds = dl.clone(source=source_url, path=dataset_path)
     
+    download_dirs = [
+        "dataset_description.json",
+        "participants.json",
+        "participants.tsv"
+    ]
 
-    # For datalad, hab
+    # Find the directories with eeg data
     print(f"Fetching EEG data for {ds_id}...")
     search_pattern = os.path.join(dataset_path, "**/eeg")
-    found_eeg_dirs = glob.glob(search_pattern, recursive=True)
+    download_dirs += glob.glob(search_pattern, recursive=True)
     
     try:
-        ds.get(path=found_eeg_dirs)
+        ds.get(path=download_dirs)
         print(f"Successfully pulled EEG data for {ds_id}")
     except Exception as e:
         print(f"Could not find EEG folders in the expected BIDS format for {ds_id}: {e}")
