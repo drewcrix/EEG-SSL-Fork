@@ -1,6 +1,4 @@
---extra-index-url https://download.pytorch.org/whl/cu126
-
-numpy>=1.17.4,<1.20
+numpy
 scipy
 matplotlib
 pandas
@@ -16,24 +14,21 @@ pyyaml-include==1.2
 
 tqdm
 
-torch
-torchvision
-torch_geometric
-
 moabb
 
 objgraph
 
-# graph neural network support
 torch-geometric
-torch-scatter
-torch-sparse
+
+# moabb<1.0 avoids np.int removal error with newer numpy (patched in neiry.py if already installed)
+moabb<1.0
 
 # EEG/BIDS spatial processing
 scikit-learn
 
-# task switch detection and label generation
+# Data loading
 datalad
+kaggle
 
 # suppress urllib3/requests version mismatch noise
 urllib3<2

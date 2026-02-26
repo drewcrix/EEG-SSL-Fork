@@ -16,7 +16,10 @@ from scipy.signal import hilbert, butter, filtfilt, find_peaks, welch
 from scipy.ndimage import generic_filter
 from joblib import Parallel, delayed
 import os
+import warnings
 import mne
+mne.set_log_level('ERROR')  # suppress boundary/filter RuntimeWarnings from MNE
+warnings.filterwarnings('ignore', message='pkg_resources is deprecated')  # mne_bids internals
 from mne_bids import BIDSPath, read_raw_bids
 import json
 
@@ -387,42 +390,31 @@ def generate_task_switch_file(path='./on', sfreq=256, BIDS_export_path = "task_s
     search_target = os.path.abspath(os.path.join(base_directory, path))
     
     all_results = []
-
+    
     # Find all the eeg files
     search_pattern = os.path.join(search_target, "**/eeg/*.edf")
     eeg_files = glob(search_pattern, recursive=True)
-                
 
     print("Found", len(eeg_files), "files")
 
-    # Read every EEG file
     for abs_file_path in tqdm(eeg_files):
-        try: 
-            #Get the relative path of the dataset file for saving the "name"
-            relative_path = os.path.relpath(abs_file_path, base_directory)
-
+        relative_path = os.path.relpath(abs_file_path, base_directory)
+        try:
             tqdm.write(f"Reading \"{relative_path}\"...")
 
-            #Loding data
-                #Assume data are already been preprocessing
             raw_data = mne.io.read_raw(abs_file_path, preload=True, verbose=False)
-            
-            # print length of data and time estimate for this process
+
             duration = raw_data.n_times / raw_data.info['sfreq']
             tqdm.write(f"Finished reading and found {duration//60} minutes of recordings")
 
-            #Resample if the sfreq isn't the number we want
             if raw_data.info['sfreq'] != sfreq:
                 raw_data = raw_data.resample(sfreq)
-                
-            #Trans eeg data to pandasdataframe
+
             df_eeg = raw_data.to_data_frame(picks='eeg')
-            
-            #The index of eeg data in the list already contain the time information
+
             if 'time' in df_eeg.columns:
                 df_eeg = df_eeg.drop(columns=['time'])
-            
-            #Using the function. 
+
             candidates = detect_task_switch_by_bhattacharyya_with_better_CPU(df_eeg, sfreq=sfreq)
             smooth_gfp = calculate_GFP(df_eeg, sfreq=sfreq)
             verified_at_segments = verify_alpha_theta_2(df_eeg, candidates, sfreq=sfreq)
@@ -437,9 +429,14 @@ def generate_task_switch_file(path='./on', sfreq=256, BIDS_export_path = "task_s
                 "name": relative_path,
                 "task_switch": after_merge
             })
-            
+
         except Exception as e:
-            print(f"Error in {relative_path}: {e}")
+            # pre-epoched .set files can't be read as raw — skip silently with empty switches
+            if "number of trials" in str(e).lower() or "must be 1" in str(e).lower():
+                tqdm.write(f"Skipping pre-epoched file (not raw): {relative_path}")
+                all_results.append({"name": relative_path, "task_switch": []})
+            else:
+                tqdm.write(f"Error in {relative_path}: {e}")
     with open(BIDS_export_path, 'w') as f:
         json.dump(all_results, f, indent=4)
 

@@ -391,17 +391,14 @@ class NEWBendingCollegeWav2Vec(BendingCollegeWav2Vec):
 
         if self.use_cluster_loss:
             #unwrap DataParallel to get encoder_h if running multi-gpu
-            encoder_h = encoder.encoder_h if not isinstance(encoder, nn.DataParallel) \
-                        else encoder.module.encoder_h
-            #memory bank shape: (num_clusters, encoder_h, memory_size)
-            #stored as a buffer so it saves with checkpoints and moves to the right device
-            self.register_buffer('cluster_memory',
-                                 torch.randn(num_clusters, encoder_h, cluster_memory_size))
-            #one write pointer per cluster for the circular buffer
-            self.register_buffer('cluster_ptr',
-                                 torch.zeros(num_clusters, dtype=torch.long))
-            #normalize so cosine similarity works right from the start
-            self.cluster_memory = F.normalize(self.cluster_memory, dim=1)
+            enc = encoder.module if isinstance(encoder, nn.DataParallel) else encoder
+            encoder_h = enc.encoder_h
+            # BaseProcess is not an nn.Module so register_buffer isn't available.
+            # Store as plain tensors; _cluster_device() moves them to the right device lazily.
+            self.cluster_memory = F.normalize(
+                torch.randn(num_clusters, encoder_h, cluster_memory_size), dim=1)
+            self.cluster_ptr = torch.zeros(num_clusters, dtype=torch.long)
+            self._cluster_encoder_h = encoder_h
 
         if self.use_reconstruction_loss:
             self.decoder = self._build_decoder(encoder)
@@ -452,6 +449,12 @@ class NEWBendingCollegeWav2Vec(BendingCollegeWav2Vec):
         Pulls same-cluster embeddings together and pushes different clusters apart.
         Labels of -1 (transition windows) are skipped entirely.
         """
+        device = embeddings.device
+        # move memory bank to same device as embeddings (handles CPU tests and GPU training)
+        if self.cluster_memory.device != device:
+            self.cluster_memory = self.cluster_memory.to(device)
+            self.cluster_ptr    = self.cluster_ptr.to(device)
+
         batch_size, feat, seq_len = embeddings.shape
 
         #mean pool over time to get one vector per epoch (B, encoder_h)
@@ -513,7 +516,7 @@ class NEWBendingCollegeWav2Vec(BendingCollegeWav2Vec):
             loss   += -torch.log(pos_exp / (pos_exp + neg_exp + 1e-8))
             num_valid += 1
 
-        return loss / max(num_valid, 1)
+        return (loss / max(num_valid, 1)).squeeze()
 
     def _compute_reconstruction_loss(self, embeddings, original_eeg, mask):
         """MSE reconstruction loss on masked regions only, like MAE/BERT."""

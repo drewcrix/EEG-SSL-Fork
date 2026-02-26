@@ -213,3 +213,8 @@ fabric.properties
 # Android studio 3.1+ serialized cache file
 .idea/caches/build_file_checksums.ser
 
+
+.data/BCICIV_2a
+.data/mmidb
+.data/physionet.org
+.data/sleep
