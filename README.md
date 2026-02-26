@@ -8,7 +8,30 @@ BENDR downsamples multichannel EEG data into a single channel for training by us
 
 BENDR does contrastive learning like wav2vec, trying to unmix permutations of eeg time series sequences. This approach is very sensible in the context of language processing as spoken sentences are known to be based on highly regular grammars with relatively few valid permuations relative to invalid ones along with having have definate start and ends. In the context of EEG data, none of these priors can be assumed to hold. We instead train by clustering segments by task-switching, through models validated by existing neuroscience work. The logic being that segmenting every time task switching occurs, we can track different thought processes, mental states, and actions, which is highly valuble, and rooted in validated principles.
 
-Below is the instructions for running it (currently copied from BENDR, pending rewrite)
+## Replication Instructions
+
+First, you will need to set up the environment by running make_env.sh
+
+Next, you will need to download all the data that we used. Do this by running the download_downstream.sh and download_pretrain.py files and pointing them to your desired data locations.
+
+Then, you can either use the existing labels or you can generate them with the following 
+
+python task_switch_identifi.py --path ./data/open_neuro_datasets --sfreq 256 --output task_switch_labels.json
+
+then, train the models with the following:
+
+BENDR architecture
+
+python pretrain.py --config configs/pretraining_test.yml --no-save-epochs
+
+
+New architecture
+
+python pretrain.py --config configs/pretraining_test.yml --use-gnn --no-save-epochs
+
+
+
+Below is the instructions for running it copied from BENDR in the interim before the final repliaction instructions are finished.
 
 
 ## BENDR 
