@@ -202,9 +202,14 @@ def adjacency_bids(dataset, subject): #computed adjacency matrix here and passed
     
     with open(json_files[0], "r") as f:
         meta = json.load(f)
+   
+    def montageName(sch):
+        scheme_clean = sch.lower().replace("-", "")
+        montage_name = f"standard_{scheme_clean}"
+        return montage_name
     
     scheme = (meta.get("EEGPlacementScheme") or "").lower()
-    montage_name = "standard_1020" if "10-20" in scheme or "1020" in scheme else "standard_1005"
+    montage_name = montageName(scheme)
 
     montage = mne.channels.make_standard_montage(montage_name)
     pos = montage.get_positions()["ch_pos"]

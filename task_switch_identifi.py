@@ -23,6 +23,9 @@ warnings.filterwarnings('ignore', message='pkg_resources is deprecated')  # mne_
 from mne_bids import BIDSPath, read_raw_bids
 import json
 
+from tqdm import tqdm
+from glob import glob
+from scipy.fft import rfft as scipy_rfft
 
 """
 Step 1: Use Bartholomew's distance to identify potential task switching points.
@@ -53,13 +56,13 @@ def bhattacharyya_distance(psd1, psd2):
 def worker(i, eeg_data_numpy, window_len, sfreq):
     front_window = eeg_data_numpy[:, i-window_len:i]
     back_window = eeg_data_numpy[:, i:i+window_len]
-    
+
     _, psd_front = welch(front_window, fs=sfreq, nperseg=window_len)
     _, psd_back = welch(back_window, fs=sfreq, nperseg=window_len)
-    
+
     avg_psd_front = np.mean(psd_front, axis=0)
     avg_psd_back = np.mean(psd_back, axis=0)
-    
+
     return bhattacharyya_distance(avg_psd_front, avg_psd_back)
 
 
@@ -67,13 +70,12 @@ def detect_task_switch_by_bhattacharyya_with_better_CPU(eeg_data_frame, sfreq=25
     """
     Args:
         eeg_data_frame (_type_): pandas dataframe (Row: Time point, Column: EEG channel)
-        gfp (_type_): numpy array of every time point's gfp
         sfreq (int, optional): 256hz. Defaults to 256.
     return:
         A list of time points that may be task switch time point
     """
     entire_time_len = len(eeg_data_frame)
-    
+
     #use 40ms as the step length of window
     step_len = int(0.040 * sfreq)
     #use 500 ms as the window length
@@ -83,38 +85,39 @@ def detect_task_switch_by_bhattacharyya_with_better_CPU(eeg_data_frame, sfreq=25
     #Later use 10s (mean + 3SD) to filt
     baseline_len = int(10 * sfreq)
     
-    
-    #Trans pandas dataframe to numpy array to calculate quicker
-    #Filp to row is channels, column is time points
-    eeg_data_numpy = eeg_data_frame.values.T #Now the shape is (channel, time)
-    
-    #Do not use for loop anymore. 
-    task_indices = range(window_len, entire_time_len - window_len, step_len)
-    
-    bd_results = Parallel(n_jobs=-1)(
-        delayed(worker)(i, eeg_data_numpy, window_len, sfreq) 
-        for i in task_indices
-    )
-    
-    df_results = pd.DataFrame({
-        'time_point': list(task_indices),
-        'bd': bd_results
-    })
-    
+
+    # float32 halves memory bandwidth vs float64; (channels, time)
+    eeg_numpy = eeg_data_frame.values.T.astype(np.float32)
+    indices   = np.arange(window_len, entire_time_len - window_len, step_len)
+    S, C, W   = len(indices), eeg_numpy.shape[0], window_len
+
+    # --- materialise all windows ---
+    all_front = np.empty((S, C, W), dtype=np.float32)
+    all_back  = np.empty((S, C, W), dtype=np.float32)
+    for k, i in enumerate(indices):
+        all_front[k] = eeg_numpy[:, i - W: i]
+        all_back[k]  = eeg_numpy[:, i: i + W]
+
+    # Batch rfft
+    # welch with nperseg=W and no overlap == single-segment periodogram == |rfft|^2
+    psd_front = np.abs(scipy_rfft(all_front, axis=-1)) ** 2   # (S, C, F)
+    psd_back  = np.abs(scipy_rfft(all_back,  axis=-1)) ** 2
+
+    avg_f = psd_front.mean(axis=1)   # (S, F)
+    avg_b = psd_back.mean(axis=1)
+    avg_f /= avg_f.sum(axis=1, keepdims=True) + 1e-10
+    avg_b /= avg_b.sum(axis=1, keepdims=True) + 1e-10
+    bd_results = -np.log(np.sum(np.sqrt(avg_f * avg_b), axis=1) + 1e-10)
+
+    df_results = pd.DataFrame({'time_point': indices, 'bd': bd_results})
+
     window_count = baseline_len // step_len
-    
-    
     df_results['prev_mean'] = df_results['bd'].rolling(window=window_count).mean().shift(1)
-    df_results['prev_std'] = df_results['bd'].rolling(window=window_count).std().shift(1)
+    df_results['prev_std']  = df_results['bd'].rolling(window=window_count).std().shift(1)
     df_results['threshold'] = df_results['prev_mean'] + 3 * df_results['prev_std']
 
-    # Filtering: 
-    # 1. Time greater than 10 seconds; 
-    # 2. bd value exceeds the threshold.
     mask = (df_results['time_point'] >= baseline_len) & (df_results['bd'] > df_results['threshold'])
-    candidate_time_points = df_results.loc[mask, 'time_point'].tolist()
-    
-    return candidate_time_points
+    return df_results.loc[mask, 'time_point'].tolist()
 
 
 
@@ -388,49 +391,52 @@ def generate_task_switch_file(path='./on', sfreq=256, BIDS_export_path = "task_s
     
     all_results = []
     
-    #If want to use absolute path, use the following code, if want to use relative path, use the "path "instead of "search_target"
-    for root, directory, files in os.walk(search_target):
-        for each_file in files:
-            if each_file.endswith((".edf", ".bdf", ".set", ".fif")):
-                #Get the full path of the dataset file
-                abs_file_path = os.path.join(root, each_file)
+    # Find all the eeg files
+    search_pattern = os.path.join(search_target, "**/eeg/*.edf")
+    eeg_files = glob(search_pattern, recursive=True)
 
-                #Get the relative path of the dataset file for saving the "name"
-                relative_path = os.path.relpath(abs_file_path, base_directory)
-                
-                try:
-                    raw_data = mne.io.read_raw(abs_file_path, preload=True, verbose=False)
+    print("Found", len(eeg_files), "files")
 
-                    if raw_data.info['sfreq'] != sfreq:
-                        raw_data = raw_data.resample(sfreq)
+    for abs_file_path in tqdm(eeg_files):
+        relative_path = os.path.relpath(abs_file_path, base_directory)
+        try:
+            tqdm.write(f"Reading \"{relative_path}\"...")
 
-                    df_eeg = raw_data.to_data_frame(picks='eeg')
+            raw_data = mne.io.read_raw(abs_file_path, preload=True, verbose=False)
 
-                    if 'time' in df_eeg.columns:
-                        df_eeg = df_eeg.drop(columns=['time'])
+            duration = raw_data.n_times / raw_data.info['sfreq']
+            tqdm.write(f"Finished reading and found {duration//60} minutes of recordings")
 
-                    candidates = detect_task_switch_by_bhattacharyya_with_better_CPU(df_eeg, sfreq=sfreq)
-                    smooth_gfp = calculate_GFP(df_eeg, sfreq=sfreq)
-                    verified_at_segments = verify_alpha_theta_2(df_eeg, candidates, sfreq=sfreq)
-                    final_segments = gfp_check(verified_at_segments, smooth_gfp, sfreq=sfreq)
+            if raw_data.info['sfreq'] != sfreq:
+                raw_data = raw_data.resample(sfreq)
 
-                    if len(final_segments) > 1:
-                        after_merge = merge_back_to_back(final_segments)
-                    else:
-                        after_merge = final_segments
+            df_eeg = raw_data.to_data_frame(picks='eeg')
 
-                    all_results.append({
-                        "name": relative_path,
-                        "task_switch": after_merge
-                    })
+            if 'time' in df_eeg.columns:
+                df_eeg = df_eeg.drop(columns=['time'])
 
-                except Exception as e:
-                    # pre-epoched .set files can't be read as raw — skip them, record with no switches
-                    if "number of trials" in str(e).lower() or "must be 1" in str(e).lower():
-                        print(f"Skipping pre-epoched file (not raw): {relative_path}")
-                        all_results.append({"name": relative_path, "task_switch": []})
-                    else:
-                        print(f"Error in {relative_path}: {e}")
+            candidates = detect_task_switch_by_bhattacharyya_with_better_CPU(df_eeg, sfreq=sfreq)
+            smooth_gfp = calculate_GFP(df_eeg, sfreq=sfreq)
+            verified_at_segments = verify_alpha_theta_2(df_eeg, candidates, sfreq=sfreq)
+            final_segments = gfp_check(verified_at_segments, smooth_gfp, sfreq=sfreq)
+
+            if len(final_segments) > 1:
+                after_merge = merge_back_to_back(final_segments)
+            else:
+                after_merge = final_segments
+
+            all_results.append({
+                "name": relative_path,
+                "task_switch": after_merge
+            })
+
+        except Exception as e:
+            # pre-epoched .set files can't be read as raw — skip silently with empty switches
+            if "number of trials" in str(e).lower() or "must be 1" in str(e).lower():
+                tqdm.write(f"Skipping pre-epoched file (not raw): {relative_path}")
+                all_results.append({"name": relative_path, "task_switch": []})
+            else:
+                tqdm.write(f"Error in {relative_path}: {e}")
     with open(BIDS_export_path, 'w') as f:
         json.dump(all_results, f, indent=4)
 
