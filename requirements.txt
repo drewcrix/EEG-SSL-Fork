@@ -1,6 +1,4 @@
---extra-index-url https://download.pytorch.org/whl/cu126
-
-numpy>=1.17.4,<1.20
+numpy
 scipy
 matplotlib
 pandas
@@ -16,16 +14,17 @@ pyyaml-include==1.2
 
 tqdm
 
+# install torch separately first with the right CUDA/CPU build for your machine:
+#   GPU (CUDA 12.6): pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+#   CPU only:        pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 torch
 torchvision
-torch_geometric
 
-moabb
-
-# graph neural network support
+# graph neural network support — scatter/sparse not needed, PyG 2.x uses native torch ops
 torch-geometric
-torch-scatter
-torch-sparse
+
+# moabb<1.0 avoids np.int removal error with newer numpy (patched in neiry.py if already installed)
+moabb<1.0
 
 # EEG/BIDS spatial processing
 scikit-learn
