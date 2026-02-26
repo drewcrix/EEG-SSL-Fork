@@ -22,6 +22,8 @@ torch_geometric
 
 moabb
 
+objgraph
+
 # graph neural network support
 torch-geometric
 torch-scatter
