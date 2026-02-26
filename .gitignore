@@ -214,7 +214,7 @@ fabric.properties
 .idea/caches/build_file_checksums.ser
 
 
-.data/BCICIV_2a
-.data/mmidb
-.data/physionet.org
-.data/sleep
+.data/BCICIV_2a/**
+.data/mmidb/**
+.data/physionet.org/**
+.data/sleep/**
