@@ -254,7 +254,12 @@ def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=True, 
                 if suggested_lpf is not None and not hasattr(ds, 'lpf'):
                     ds.lpf = suggested_lpf
 
-        dataset = ds.auto_construct_dataset()
+        # Generate a mapping ignoring the files in the git annex, only looking at the symlinks
+        search_pattern = os.path.join(toplevel, "**/eeg/*.edf")
+        eeg_files = glob.glob(search_pattern, recursive=True)
+        mapping = ds.auto_mapping(files=eeg_files)
+
+        dataset = ds.auto_construct_dataset(mapping)
 
         if use_to1020:
             dataset.add_transform(To1020())
