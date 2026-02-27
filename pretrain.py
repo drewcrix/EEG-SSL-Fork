@@ -22,7 +22,7 @@ import os
 import glob
 import json
 
-from dn3_ext import NEWBendingCollegeWav2Vec, ConvEncoderBENDR, BENDRContextualizer
+from dn3_ext import NEWBendingCollegeWav2Vec, ConvEncoderBENDR, BENDRContextualizer, GGNStackEncoder
 from dn3.configuratron import ExperimentConfig
 from dn3.transforms.instance import To1020
 from dn3.transforms.batch import RandomTemporalCrop
@@ -34,8 +34,12 @@ from sklearn.neighbors import kneighbors_graph
 from pathlib import Path
 from torch.utils.data import ConcatDataset, Dataset
 
+from FullEncoder import GGNStackEncoder, adjacency_bids
+
 import mne
 mne.set_log_level(False)
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def safe_sfreq_for_dataset(toplevel, target_sfreq=256, epoch_secs=10):
@@ -189,67 +193,6 @@ class ClusterLabelDataset(Dataset):
         eeg = sample[0] if isinstance(sample, (tuple, list)) else sample
         return eeg, torch.tensor(self._labels[idx], dtype=torch.long)
 
-def adjacency_bids(dataset, subject, toplevel=None):
-    """
-    Build electrode adjacency graph from BIDS sidecar files.
-    toplevel: path to the dataset root (e.g. ./on/ds003775).
-              Falls back to ./data/on/<dataset> if not given.
-    """
-    if toplevel is not None:
-        dataset_dir = toplevel
-    else:
-        base_dir = Path(__file__).parent
-        dataset_dir = os.path.join(base_dir, "data", "on", dataset)
-
-    subject_dir = os.path.join(dataset_dir, subject)
-
-    search_json = os.path.join(subject_dir, "**", "*.json")
-    search_tsv  = os.path.join(subject_dir, "**", "eeg", "*_channels.tsv")
-
-    tsv_files  = glob.glob(search_tsv, recursive=True)
-    json_files = glob.glob(search_json, recursive=True)
-
-    if not json_files:
-        raise FileNotFoundError(
-            f"adjacency_bids: no JSON sidecar found under {subject_dir}. "
-            f"Check that the dataset is downloaded and the toplevel path is correct. "
-            f"Dataset dir searched: {dataset_dir}")
-
-    with open(json_files[0], "r") as f:
-        meta = json.load(f)
-   
-    def montageName(sch):
-        sch = sch.lower().replace("-", "").replace(" ", "")
-        # map common scheme names to valid MNE montage identifiers
-        # standard_1005 is a superset of 10-10 and 10-20 so it works for all three
-        _MAP = {
-            "1010": "standard_1005",
-            "1020": "standard_1020",
-            "1005": "standard_1005",
-        }
-        for key, val in _MAP.items():
-            if key in sch:
-                return val
-        return "standard_1005"  # safe fallback for unknown schemes
-
-    scheme = (meta.get("EEGPlacementScheme") or "").lower()
-    montage_name = montageName(scheme)
-
-    montage = mne.channels.make_standard_montage(montage_name)
-    pos = montage.get_positions()["ch_pos"]
-
-    df = pd.read_csv(tsv_files[0], sep="\t")
-    ch_names = df["name"].dropna().astype(str).tolist()
-    
-    coords_2d = np.array([[pos[ch][0], pos[ch][1]] for ch in ch_names if ch in pos], dtype=float)
-    kept_names = [ch for ch in ch_names if ch in pos]
-    
-    A = kneighbors_graph(coords_2d, n_neighbors=min(8, len(kept_names)-1),
-                         mode="connectivity", include_self=True).toarray()
-    A_matrix = torch.tensor(A, dtype=torch.float32)  
-    edge_index, edge_weight = dense_to_sparse(A_matrix)
-
-    return edge_index, edge_weight
 
 def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=True, use_GNN=False):
     training       = []
@@ -346,6 +289,8 @@ def parse_args():
                         help="Skip To1020 remapping. Required when using --use-gnn.")
     parser.add_argument('--use-gnn', action='store_true',
                         help="Use CNN+GNN encoder instead of ConvEncoderBENDR.")
+    parser.add_argument('--multi-gpu', action='store_true',
+                        help="Use multiple GPUs for train")
     return parser.parse_args()
 
 
@@ -367,60 +312,9 @@ if __name__ == '__main__':
         experiment, label_dict=label_dict, epoch_len=epoch_len, use_to1020=use_to1020, use_GNN=use_GNN)
 
     if use_GNN:
-        cnn = CNNEncoder(
-            output_channels=max(1, args.hidden_size // 4),
-            kernel_sizes=(128, 64, 32),
-            pool_sizes=(5, 3, 2),
-            dropout=0.5,
-            stride=1,
-            padding="same",
-        )
-        gnn = GCNEncoder(
-            nfeat=cnn.F,
-            nhid=args.hidden_size,
-            nout=args.hidden_size,
-            dropout=getattr(experiment, "dropout", 0.5),
-            pool_ratio=0.9,
-        )
-
-        class Encoder(torch.nn.Module):
-            def __init__(self, cnn, gnn, encoder_h):
-                super().__init__()
-                self.cnn = cnn
-                self.gnn = gnn
-                self.encoder_h = encoder_h
-                self.edge_index  = None
-                self.edge_weight = None
-
-            def forward(self, x):
-                h = self.cnn(x)
-                # move graph to same device as input (CPU in tests, GPU in training)
-                ei = self.edge_index.to(x.device)
-                ew = self.edge_weight.to(x.device)
-                _, z_seq = self.gnn(h, ei, ew)
-                return z_seq
-
-            def save(self, path):
-                torch.save(self.state_dict(), path)
-
-            def load(self, path):
-                self.load_state_dict(torch.load(path))
-
-            def downsampling_factor(self, samples):
-                # CNN pools by (5,3,2) = 30x total; needed by BendingCollegeWav2Vec
-                from math import ceil
-                for block in (self.cnn.block1, self.cnn.block2, self.cnn.block3):
-                    p = block.pool.kernel_size
-                    p = p[0] if isinstance(p, tuple) else p
-                    samples = ceil(samples / p)
-                return samples
-
-            def description(self, sfreq, samples):
-                return f"CNN+GNN Encoder | sfreq={sfreq} | samples={samples} | hidden={self.encoder_h}"
-
-        encoder = Encoder(cnn, gnn, encoder_h=args.hidden_size)
-        encoder.edge_index  = edge_index
-        encoder.edge_weight = edge_weight
+        dropout = getattr(experiment, "dropout", 0.5)
+        encoder = GGNStackEncoder(args.hidden_size,dropout,edge_index,edge_weight)
+        
     else:
         # default: ConvEncoderBENDR with To1020 fixed 21 channels
         n_channels = len(To1020.EEG_20_div) + 1
@@ -435,7 +329,7 @@ if __name__ == '__main__':
 
     if args.resume is not None:
         encoder.load('checkpoints/encoder_epoch_{}.pt'.format(args.resume))
-        contextualizer.load('checkpoints/contextualizer_epoch_{}.pt'.format(args.resume))
+        contextualizer.load('checkpoints/contextualizer_epoch_{}.pt'.format(args.resume))\
 
     #use_cluster_loss only does something when label_dict is not None
     process = NEWBendingCollegeWav2Vec(

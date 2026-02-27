@@ -19,7 +19,7 @@ training_params:
   epochs: 10
   validation_interval: 100
   train_log_interval: 100
-  batch_size: 32
+  batch_size: 8
   warmup_frac: 0.05
 
 mask_threshold: 0.85

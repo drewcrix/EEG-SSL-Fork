@@ -16,6 +16,8 @@ from dn3.trainable.models import StrideClassifier, Classifier
 from dn3.trainable.layers import Flatten, Permute
 from dn3.utils import DN3ConfigException
 
+from FullEncoder import GGNStackEncoder, adjacency_bids
+
 
 class LinearHeadBENDR(Classifier):
 
@@ -81,6 +83,33 @@ class BENDRClassification(Classifier):
     def num_features_for_classification(self):
         return self.encoder_h
 
+    @classmethod
+    def from_dataset(cls, dataset, top_level=None, **modelargs):
+        """Overwrite of the from_dataset method from the base DN3 classifier to allow the generation of GNNs too"""
+
+        if hasattr(dataset, 'get_targets'):
+            targets = len(np.unique(dataset.get_targets()))
+        elif dataset.info is not None and isinstance(dataset.info.targets, int):
+            targets = dataset.info.targets
+        else:
+            targets = 2
+        modelargs.setdefault('targets', targets)
+        print("Creating {} using: {} channels x {} samples at {}Hz | {} targets".format(cls.__name__,
+                                                                                        len(dataset.channels),
+                                                                                        dataset.sequence_length,
+                                                                                        dataset.sfreq,
+                                                                                        modelargs['targets']))
+
+        if modelargs['use_GNN'] is not None:
+            if top_level is None:
+                raise RuntimeError("toplevel must be passed to from_dataset when use_gnn=True")
+    
+            edge_index, edge_weight = adjacency_bids(top_level)
+            modelargs['edge_index']  = edge_index
+            modelargs['edge_weight'] = edge_weight
+
+        return cls(samples=dataset.sequence_length, channels=len(dataset.channels), **modelargs)
+
     def features_forward(self, *x):
         encoded = self.encoder(x[0])
 
@@ -91,16 +120,25 @@ class BENDRClassification(Classifier):
         context = self.contextualizer(encoded)
         # return self.projection_mlp(context[:, :, 0])
         # return nn.functional.adaptive_max_pool1d(context, output_size=1)
-        return context[:, :, -1]
+        return context[:, :, -1]           
 
     def __init__(self, targets, samples, channels, encoder_h=512, contextualizer_hidden=3076, projection_head=False,
                  new_projection_layers=0, dropout=0., trial_embeddings=None, layer_drop=0, keep_layers=None,
-                 mask_p_t=0.01, mask_p_c=0.005, mask_t_span=0.1, mask_c_span=0.1, multi_gpu=False):
+                 mask_p_t=0.01, mask_p_c=0.005, mask_t_span=0.1, mask_c_span=0.1, use_GNN=False, edge_index=None, edge_weight=None, multi_gpu=False):
         self.encoder_h = encoder_h
         self.contextualizer_hidden = contextualizer_hidden
         super().__init__(targets, samples, channels)
 
-        encoder = ConvEncoderBENDR(channels, encoder_h=encoder_h, dropout=dropout, projection_head=projection_head)
+
+        if use_GNN:
+            assert edge_index is not None
+            encoder = GGNStackEncoder(edge_index, edge_weight, encoder_h, dropout)
+            
+            
+        else:
+            encoder = ConvEncoderBENDR(channels, encoder_h=encoder_h, dropout=dropout, projection_head=projection_head)
+        
+
         encoded_samples = encoder.downsampling_factor(samples)
 
         mask_t_span = mask_t_span if mask_t_span > 1 else int(mask_t_span * encoded_samples)
@@ -905,3 +943,5 @@ class LoaderERPBCI:
         events, occurrences = mne.events_from_annotations(run, lambda a: int(target_letter in a) + 1)
         run.add_events(events, stim_channel=cls.STIM_CHANNEL)
         return run
+
+

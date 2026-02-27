@@ -6,8 +6,8 @@ Configuratron:
   deep1010:
     return_mask: False
 
-encoder_weights: checkpoints/encoder_baseline.pt
-context_weights: checkpoints/contextualizer_baseline.pt
+encoder_weights: checkpoints/encoder_full.pt
+context_weights: checkpoints/contextualizer_full.pt
 
 datasets: !include configs/downstream_datasets.yml
 
