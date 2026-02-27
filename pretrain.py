@@ -406,7 +406,9 @@ if __name__ == '__main__':
             def downsampling_factor(self, samples):
                 # CNN pools by (5,3,2) = 30x total; needed by BendingCollegeWav2Vec
                 from math import ceil
-                for p in self.cnn.block1.pool.kernel_size, self.cnn.block2.pool.kernel_size, self.cnn.block3.pool.kernel_size:
+                for block in (self.cnn.block1, self.cnn.block2, self.cnn.block3):
+                    p = block.pool.kernel_size
+                    p = p[0] if isinstance(p, tuple) else p
                     samples = ceil(samples / p)
                 return samples
 
