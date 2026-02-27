@@ -219,10 +219,19 @@ def adjacency_bids(dataset, subject, toplevel=None):
         meta = json.load(f)
    
     def montageName(sch):
-        scheme_clean = sch.lower().replace("-", "")
-        montage_name = f"standard_{scheme_clean}"
-        return montage_name
-    
+        sch = sch.lower().replace("-", "").replace(" ", "")
+        # map common scheme names to valid MNE montage identifiers
+        # standard_1005 is a superset of 10-10 and 10-20 so it works for all three
+        _MAP = {
+            "1010": "standard_1005",
+            "1020": "standard_1020",
+            "1005": "standard_1005",
+        }
+        for key, val in _MAP.items():
+            if key in sch:
+                return val
+        return "standard_1005"  # safe fallback for unknown schemes
+
     scheme = (meta.get("EEGPlacementScheme") or "").lower()
     montage_name = montageName(scheme)
 
