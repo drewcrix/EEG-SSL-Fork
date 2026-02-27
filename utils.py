@@ -14,12 +14,16 @@ CUSTOM_LOADERS = dict(
 EXTRA_METRICS = dict(bac=balanced_accuracy,
                      auroc=auroc)
 
-MODEL_CHOICES = ['BENDR', 'linear']
+MODEL_CHOICES = ['BENDR', 'FULL', 'linear']
 
 
 def make_model(args, experiment, dataset):
     if args.model == MODEL_CHOICES[0]:
         model = BENDRClassification.from_dataset(dataset)
+
+    elif args.model == MODEL_CHOICES[1]:
+        model = BENDRClassification.from_dataset(dataset)
+
     else:
         model = LinearHeadBENDR.from_dataset(dataset)
 

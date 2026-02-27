@@ -1,17 +1,13 @@
 Configuratron:
   use_only:
     - mmidb
-    - bci_iv_2a
-    - ern
-    - erpbci
-    - sleep-edf
   preload: True
   sfreq: 256
   deep1010:
     return_mask: False
 
-encoder_weights: <saved encoder weights>
-context_weights: <saved transformer weights>
+encoder_weights: checkpoints/encoder_baseline.pt
+context_weights: checkpoints/contextualizer_baseline.pt
 
 datasets: !include configs/downstream_datasets.yml
 

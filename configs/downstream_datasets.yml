@@ -1,6 +1,6 @@
 mmidb:
   name: "Physionet MMIDB"
-  toplevel: /data/mmidb/
+  toplevel: ~/mne_data/MNE-eegbci-data/files/eegmmidb/
   tmin: 0
   tlen: 6
   data_max: 0.001

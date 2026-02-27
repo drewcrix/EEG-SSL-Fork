@@ -218,3 +218,5 @@ fabric.properties
 .data/mmidb/**
 .data/physionet.org/**
 .data/sleep/**
+
+.checkpoints/**

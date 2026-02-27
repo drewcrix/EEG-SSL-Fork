@@ -12,7 +12,9 @@ BENDR does contrastive learning like wav2vec, trying to unmix permutations of ee
 
 First, you will need to set up the environment by running make_env.sh
 
-Next, you will need to download all the data that we used. Do this by running the download_downstream.sh and download_pretrain.py files and pointing them to your desired data locations.
+Next, you will need to download all the data that we used. Do this by running the download_downstream.py and download_pretrain.py files and pointing them to your desired data locations.
+
+When running download_downstream.py, make a note of where the data downloaded to (it will be your default MNE download location unless you manually change it), and in the downstream_datasets.yml, point the paths to where they went.
 
 Then, you can either use the existing labels or you can generate them with the following 
 
@@ -29,6 +31,11 @@ New architecture
 
 python pretrain.py --config configs/pretraining_test.yml --use-gnn --no-save-epochs
 
+
+Finally, run the downstream train on the desired model. You may want to point to specific copies of checkpoints in the config if you are training multiple models.
+
+python downstream.py BENDR --multi-gpu --results-filename bendr_results.xlsx
+python downstream .py FULL --multi-gpu --results-filename full_results.xlsx
 
 
 Below is the instructions for running it copied from BENDR in the interim before the final repliaction instructions are finished.

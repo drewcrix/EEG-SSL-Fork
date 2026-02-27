@@ -53,6 +53,8 @@ if __name__ == '__main__':
             if not args.random_init:
                 model.load_pretrained_modules(experiment.encoder_weights, experiment.context_weights,
                                               freeze_encoder=args.freeze_encoder)
+
+                                              
             process = StandardClassification(model, metrics=added_metrics)
             process.set_optimizer(torch.optim.Adam(process.parameters(), ds.lr, weight_decay=0.01))
 
