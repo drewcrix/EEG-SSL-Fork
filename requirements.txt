@@ -13,6 +13,7 @@ pyyaml==5.3.1
 pyyaml-include==1.2
 
 tqdm
+pytest
 
 moabb
 

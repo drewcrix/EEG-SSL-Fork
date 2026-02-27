@@ -40,7 +40,6 @@ python downstream .py FULL --multi-gpu --results-filename full_results.xlsx
 
 Below is the instructions for running it copied from BENDR in the interim before the final repliaction instructions are finished.
 
-
 ## BENDR 
 *BErt-like Neurophysiological Data Representation*
 
@@ -62,3 +61,10 @@ Once you have a pre-trained model:
     1) Add the paths of the pre-trained weights to configs/downstream.yml
     2) Edit paths to local copies of your datasets in configs/downstream_datasets.yml
     3) Run downstream.sh
+
+## Troubleshooting
+
+If there are problems using git in vscode it can be simpler to get annex in your base env than to try to get the vscode to point to the right env.
+
+conda deactivate
+conda install -c conda-forge datalad

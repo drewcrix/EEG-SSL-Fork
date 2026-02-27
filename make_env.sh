@@ -1,7 +1,8 @@
 conda create --name bendr_env python=3.9 -y
 conda activate bendr_env
 
-conda install -c conda-forge datalad -y
+conda install -c conda-forge git-annex=*=alldep*                           
+
 
 # install torch first — pick the line that matches your machine:
 # GPU (CUDA 12.6):  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126

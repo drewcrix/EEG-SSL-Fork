@@ -215,6 +215,7 @@ fabric.properties
 
 
 .data/BCICIV_2a/**
+.data/downstream/**
 .data/mmidb/**
 .data/physionet.org/**
 .data/sleep/**
