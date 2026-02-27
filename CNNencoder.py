@@ -82,6 +82,9 @@ class CNNEncoder(nn.Module):
         x = x.reshape(B, C, F, Tp) #keeping the time dimension 
         return x
 
-model = CNNEncoder()
 
-
+if __name__ == "__main__":
+    model = CNNEncoder()
+    x = torch.randn(2, 64, 2560)
+    out = model(x)
+    print("CNNEncoder output shape:", out.shape)  # expect (2, 64, F, Tp)
