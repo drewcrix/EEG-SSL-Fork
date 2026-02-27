@@ -403,6 +403,13 @@ if __name__ == '__main__':
             def load(self, path):
                 self.load_state_dict(torch.load(path))
 
+            def downsampling_factor(self, samples):
+                # CNN pools by (5,3,2) = 30x total; needed by BendingCollegeWav2Vec
+                from math import ceil
+                for p in self.cnn.block1.pool.kernel_size, self.cnn.block2.pool.kernel_size, self.cnn.block3.pool.kernel_size:
+                    samples = ceil(samples / p)
+                return samples
+
             def description(self, sfreq, samples):
                 return f"CNN+GNN Encoder | sfreq={sfreq} | samples={samples} | hidden={self.encoder_h}"
 
