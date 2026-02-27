@@ -189,17 +189,32 @@ class ClusterLabelDataset(Dataset):
         eeg = sample[0] if isinstance(sample, (tuple, list)) else sample
         return eeg, torch.tensor(self._labels[idx], dtype=torch.long)
 
-def adjacency_bids(dataset, subject): #computed adjacency matrix here and passed through GNNencoder. Sets the montage based on the standard size and then the associated channels. Same accross subjects
-    base_dir = Path(__file__).parent
-    dataset_dir = os.path.join(base_dir, f"data/on/{dataset}")
-    subject_dir = os.path.join(dataset_dir, f"{subject}")
-                               
+def adjacency_bids(dataset, subject, toplevel=None):
+    """
+    Build electrode adjacency graph from BIDS sidecar files.
+    toplevel: path to the dataset root (e.g. ./on/ds003775).
+              Falls back to ./data/on/<dataset> if not given.
+    """
+    if toplevel is not None:
+        dataset_dir = toplevel
+    else:
+        base_dir = Path(__file__).parent
+        dataset_dir = os.path.join(base_dir, "data", "on", dataset)
+
+    subject_dir = os.path.join(dataset_dir, subject)
+
     search_json = os.path.join(subject_dir, "**", "*.json")
     search_tsv  = os.path.join(subject_dir, "**", "eeg", "*_channels.tsv")
 
     tsv_files  = glob.glob(search_tsv, recursive=True)
     json_files = glob.glob(search_json, recursive=True)
-    
+
+    if not json_files:
+        raise FileNotFoundError(
+            f"adjacency_bids: no JSON sidecar found under {subject_dir}. "
+            f"Check that the dataset is downloaded and the toplevel path is correct. "
+            f"Dataset dir searched: {dataset_dir}")
+
     with open(json_files[0], "r") as f:
         meta = json.load(f)
    
@@ -265,7 +280,7 @@ def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=True, 
             dataset.add_transform(To1020())
         elif use_GNN:
             subj = "sub-001"
-            edge_index, edge_weight = adjacency_bids(name, subj)
+            edge_index, edge_weight = adjacency_bids(name, subj, toplevel=toplevel)
 
         is_validation = (hasattr(experiment, 'validation_dataset') and
                          experiment.validation_dataset == name)
