@@ -1,13 +1,18 @@
 mmidb:
   name: "Physionet MMIDB"
-  toplevel: ~/mne_data/MNE-eegbci-data/files/eegmmidb/
+  toplevel: ./data/downstream/MNE-BIDS-physionet-motor-imagery
   tmin: 0
   tlen: 6
   data_max: 0.001
   data_min: -0.001
+  extensions:
+    - .edf
+  picks:
+    - eeg
   events:
-    - T1
-    - T2
+    rest: 0
+    feet: 1
+    hands: 2
   exclude_sessions:
     - "*R0[!48].edf"  # equivalently "*R0[1235679].edf"
     - "*R1[!2].edf"   # equivalently "*R1[134].edf"

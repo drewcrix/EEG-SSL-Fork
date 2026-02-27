@@ -4,8 +4,11 @@ import yaml
 from dn3.metrics.base import balanced_accuracy, auroc
 from dn3.transforms.instance import To1020
 
+import os, glob
+from pathlib import Path
 from dn3_ext import LoaderERPBCI, LinearHeadBENDR, BENDRClassification
 
+import tqdm
 
 CUSTOM_LOADERS = dict(
     erpbci=LoaderERPBCI,
@@ -54,16 +57,35 @@ def get_ds_added_metrics(ds_name, metrics_config):
     return {m: EXTRA_METRICS[m] for m in metrics if m != 'Accuracy'}, retain_best, chance_level
 
 
-def get_ds(name, ds):
+def get_ds(name, ds, apply_to1020):
     if name in CUSTOM_LOADERS:
         ds.add_custom_raw_loader(CUSTOM_LOADERS[name]())
-    dataset = ds.auto_construct_dataset()
-    dataset.add_transform(To1020())
+
+    top_level=getattr(ds, 'toplevel', None)
+    search_pattern = os.path.join(top_level, "**/eeg/*.edf")
+
+    eeg_files = glob.glob(search_pattern, recursive=True)
+    
+    mapping = {}
+    for fpath in eeg_files:
+        # path is .../sub-9/ses-0/eeg/filename.edf
+        # walk up to find the sub-X component
+        parts = Path(fpath).parts
+        subj = next((p for p in parts if p.startswith('sub-')), None)
+        if subj is None:
+            continue
+        if subj not in mapping:
+            mapping[subj] = []
+        mapping[subj].append(fpath)
+
+    dataset = ds.auto_construct_dataset(mapping)
+
+    if apply_to1020: dataset.add_transform(To1020())
     return dataset
 
 
-def get_lmoso_iterator(name, ds):
-    dataset = get_ds(name, ds)
+def get_lmoso_iterator(name, ds, apply_to1020):
+    dataset = get_ds(name, ds, apply_to1020)
     specific_test = ds.test_subjects if hasattr(ds, 'test_subjects') else None
     iterator = dataset.lmso(ds.folds, test_splits=specific_test) \
         if hasattr(ds, 'folds') else dataset.loso(test_person_id=specific_test)
