@@ -394,7 +394,10 @@ if __name__ == '__main__':
 
             def forward(self, x):
                 h = self.cnn(x)
-                _, z_seq = self.gnn(h, self.edge_index, self.edge_weight)
+                # move graph to same device as input (CPU in tests, GPU in training)
+                ei = self.edge_index.to(x.device)
+                ew = self.edge_weight.to(x.device)
+                _, z_seq = self.gnn(h, ei, ew)
                 return z_seq
 
             def save(self, path):
