@@ -33,7 +33,7 @@ class GGNStackEncoder(torch.nn.Module):
             output_channels=max(1, hidden_size // 4),
             kernel_sizes=(128, 64, 32),
             pool_sizes=(5, 3, 2),
-            dropout=0.8, #decreased the dropout from 0.5 to 0.8
+            dropout=0.3, #decreased the dropout from 0.5 to 0.3
             stride=1,
             padding="same",
         )
