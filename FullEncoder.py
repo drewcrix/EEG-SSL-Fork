@@ -26,7 +26,7 @@ from GNNencoder import GCNEncoder
 from CNNencoder import CNNEncoder
 
 class GGNStackEncoder(torch.nn.Module):
-    def __init__(self, edge_index, edge_weight=None, hidden_size=256, dropout=None):
+    def __init__(self, edge_index, edge_weight=None, hidden_size=512, dropout=None):
         super().__init__()
 
         self.cnn = CNNEncoder(

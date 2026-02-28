@@ -237,7 +237,7 @@ def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=True, 
             dataset.add_transform(To1020())
         elif use_GNN:
             subj = "sub-001"
-            edge_index, edge_weight = adjacency_bids(name, subj, toplevel=toplevel)
+            edge_index, edge_weight = adjacency_bids(top_level=toplevel)
 
         is_validation = (hasattr(experiment, 'validation_dataset') and
                          experiment.validation_dataset == name)
@@ -313,7 +313,7 @@ if __name__ == '__main__':
 
     if use_GNN:
         dropout = getattr(experiment, "dropout", 0.5)
-        encoder = GGNStackEncoder(args.hidden_size,dropout,edge_index,edge_weight)
+        encoder = GGNStackEncoder(edge_index,edge_weight,args.hidden_size,dropout)
         
     else:
         # default: ConvEncoderBENDR with To1020 fixed 21 channels

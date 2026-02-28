@@ -35,7 +35,7 @@ if __name__ == '__main__':
     parser.add_argument('--results-filename', default=None, 
                             help='What to name the spreadsheet produced with all final results.')
 
-    parser.add_argument('--hidden-size', type=int, default=256, 
+    parser.add_argument('--hidden-size', type=int, default=512, 
                             help='Hidden size of the encoders')
 
     args = parser.parse_args()

@@ -15,6 +15,21 @@ mmidb:
     hands: 2
   exclude_sessions:
     - "*R0[!48].edf"  # equivalently "*R0[1235679].edf"
+    - "*R1[!2].edf"   # equivalently "*R1[134].edf"  exclude_people:ery
+  tmin: 0
+  tlen: 6
+  data_max: 0.001
+  data_min: -0.001
+  extensions:
+    - .edf
+  picks:
+    - eeg
+  events:
+    rest: 0
+    feet: 1
+    hands: 2
+  exclude_sessions:
+    - "*R0[!48].edf"  # equivalently "*R0[1235679].edf"
     - "*R1[!2].edf"   # equivalently "*R1[134].edf"
   exclude_people:
     - S088
@@ -23,8 +38,8 @@ mmidb:
     - S100
   train_params:
     epochs: 7
-    batch_size: 4 # I find this dataset likes small batch sizes
-  lr: 0.00001
+    batch_size: 8
+  lr: 0.00004
   folds: 5
 
 
