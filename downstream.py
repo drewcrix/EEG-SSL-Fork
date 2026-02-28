@@ -35,14 +35,23 @@ if __name__ == '__main__':
     parser.add_argument('--results-filename', default=None, 
                             help='What to name the spreadsheet produced with all final results.')
 
-    parser.add_argument('--hidden-size', type=int, default=512, 
+    parser.add_argument('--hidden-size', type=int, default=512,
                             help='Hidden size of the encoders')
+
+    parser.add_argument('--device', default=None, type=int,
+                    help='GPU device index to use (e.g. 0 or 1). Defaults to auto-detect.')
 
     args = parser.parse_args()
     experiment = ExperimentConfig(args.ds_config)
 
+    if args.device is not None:
+        torch.cuda.set_device(args.device)
+        device = torch.device(f'cuda:{args.device}')
+    else:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     if not args.results_filename:
-        results_filename=f"results/{args.model}.xlsx"
+        args.results_filename = f"results/{args.model}.xlsx"    
 
     results = ThinkerwiseResultTracker()
 
@@ -57,7 +66,7 @@ if __name__ == '__main__':
                 model = BENDRClassification.from_dataset(training, multi_gpu=args.multi_gpu, encoder_h=args.hidden_size)
 
             elif args.model == utils.MODEL_CHOICES[1]:
-                top_level=getattr(ds, 'toplevel', None)
+                top_level=getattr(ds, 'toplevel', None) 
                 model = BENDRClassification.from_dataset(training, top_level=top_level, use_GNN=True, encoder_h=args.hidden_size, multi_gpu=args.multi_gpu)
 
             else:

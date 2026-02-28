@@ -87,6 +87,7 @@ def get_ds(name, ds, apply_to1020):
 def get_lmoso_iterator(name, ds, apply_to1020):
     dataset = get_ds(name, ds, apply_to1020)
     specific_test = ds.test_subjects if hasattr(ds, 'test_subjects') else None
+    tqdm.tqdm.write(f"folds={ds.folds}, specific_test={specific_test}, thinkers={len(dataset.thinkers)}")
     iterator = dataset.lmso(ds.folds, test_splits=specific_test) \
         if hasattr(ds, 'folds') else dataset.loso(test_person_id=specific_test)
     return iterator

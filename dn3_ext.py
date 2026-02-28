@@ -100,7 +100,7 @@ class BENDRClassification(Classifier):
                                                                                         dataset.sfreq,
                                                                                         modelargs['targets']))
 
-        if modelargs['use_GNN'] is not None:
+        if 'use_GNN' in modelargs and modelargs['use_GNN'] is not None:
             if top_level is None:
                 raise RuntimeError("toplevel must be passed to from_dataset when use_gnn=True")
     

@@ -291,12 +291,22 @@ def parse_args():
                         help="Use CNN+GNN encoder instead of ConvEncoderBENDR.")
     parser.add_argument('--multi-gpu', action='store_true',
                         help="Use multiple GPUs for train")
+
+    parser.add_argument('--device', default=None, type=int,
+                    help='GPU device index to use (e.g. 0 or 1). Defaults to auto-detect.')
+
     return parser.parse_args()
 
 
 if __name__ == '__main__':
     args = parse_args()
     experiment = ExperimentConfig(args.config)
+
+    if args.device is not None:
+        torch.cuda.set_device(args.device)
+        device = torch.device(f'cuda:{args.device}')
+    else:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     #load cluster labels if provided, otherwise runs vanilla BENDR with InfoNCE only
     label_dict = None
@@ -332,9 +342,10 @@ if __name__ == '__main__':
         contextualizer.load('checkpoints/contextualizer_epoch_{}.pt'.format(args.resume))\
 
     #use_cluster_loss only does something when label_dict is not None
+    use_cluster_loss = label_dict is not None
     process = NEWBendingCollegeWav2Vec(
         encoder, contextualizer,
-        use_cluster_loss = label_dict is not None,
+        use_cluster_loss = use_cluster_loss,
         num_clusters     = args.num_clusters,
         **experiment.bending_college_args)
 
@@ -364,8 +375,13 @@ if __name__ == '__main__':
             tqdm.tqdm.write("Increased mask span to {} samples".format(process.mask_span))
         if not args.no_save:
             tqdm.tqdm.write("Saving...")
-            encoder.save('checkpoints/encoder.pt')
-            contextualizer.save('checkpoints/contextualizer.pt')
+
+            model_name = 'gnn' if use_GNN else 'baseline'
+            if use_cluster_loss: 
+                model_name = model_name + '_cluster_loss'
+
+            encoder.save(f'checkpoints/encoder_{model_name}.pt')
+            contextualizer.save(f'checkpoints/contextualizer_{model_name}.pt')
 
     #save initial weights before any training so we always have a fallback checkpoint
     simple_checkpoint(None)
