@@ -31,9 +31,10 @@ class GCNEncoder(nn.Module):
     - F  : Feature dim per electrode provided from CNN
     - Tp : Time dimension containing feature strengths over time
 """
-    def __init__(self, nfeat: int, nhid: int, nout: int, dropout: float = 0.5, pool_ratio: float = 0.9):
+    def __init__(self, nfeat: int, nhid: int, nout: int, dropout: float = 0.5, pool_ratio: float = 0.6): #changed the pool ratio to 0.6
         super().__init__()
 
+        self.input_proj = nn.Linear(nfeat, nout) #projecting the CNN Features to GNN output
 
         self.gc1 = GCNConv(nfeat, nhid)
         self.bn1 = nn.BatchNorm1d(nhid)
@@ -59,7 +60,57 @@ class GCNEncoder(nn.Module):
 
         edge_weight_big = edge_weight.repeat(num_graphs)
         return edge_index_big, edge_weight_big
+    
+    def forward(self, h: torch.Tensor, edge_index: torch.Tensor, edge_weight: torch.Tensor):
 
+        B, C, F, Tp = h.shape
+        num_graphs = B
+
+        # 1) Time summary ONLY for the spatial graph path
+        h_mean = h.mean(dim=-1)                          # (B, C, F)
+        x0 = h_mean.reshape(B * C, Fdim)                 # (B*C, F)
+
+        batch = torch.arange(num_graphs, device=h.device, dtype=torch.long).repeat_interleave(C)
+        edge_index_big, edge_weight_big = self._repeat_fixed_graph(edge_index, edge_weight, B, C)
+
+        # 2) Spatial GNN + SAGPooling on B graphs (not B*Tp)
+        x = self.gc1(x0, edge_index_big, edge_weight=edge_weight_big)
+        x = self.bn1(x)
+        x = self.rel1(x)
+
+        x, edge_index_big, edge_weight_big, batch, perm, score = self.pool1(
+            x, edge_index_big, edge_attr=edge_weight_big, batch=batch
+        )
+        x = self.drop(x)
+
+        x = self.gc2(x, edge_index_big, edge_weight=edge_weight_big)
+        x = self.bn2(x)
+        x = self.rel2(x)
+        x = self.drop(x)                                
+
+        # Preserve time-varying features
+        h_full = h.permute(0, 1, 3, 2).contiguous().view(B * C, Tp, F)
+
+        # Project each time-varying F-dim feature vector to nout
+        h_full = self.input_proj(h_full)                 # (B*C, Tp, features)
+
+        # Take full time varying features for only the kept electrodes after pooling
+        h_kept = h_full[perm]                            # (N_kept, Tp, features)
+
+        # Use SAGPooling scores as spatial weights, normalized per graph
+        # might not need these weights. Can use SAGPooling as a hard filter instead of incorperating softmax
+        w = softmax(score, batch)                        # (N_kept,)
+        h_kept = h_kept * w.view(-1, 1, 1)              # weighted kept electrodes
+
+        # Sum kept electrodes back into one sequence per trial
+        z = torch.zeros(B, Tp, h_kept.size(-1), device=h.device, dtype=h_kept.dtype)
+        z.index_add_(0, batch, h_kept)                   # (B, Tp, features)
+
+    
+        z_seq = z.permute(0, 2, 1).contiguous()         # (B, features, Tp)
+
+        return x, z_seq
+'''
     def forward(self, h: torch.Tensor, edge_index: torch.Tensor, edge_weight: torch.Tensor):
 
         B, C, F, Tp = h.shape
@@ -94,7 +145,7 @@ class GCNEncoder(nn.Module):
         z_seq = z_seq.permute(0, 2, 1).contiguous() #permute to (B, features, Tp) for consistency with Bendr       
 
         return x, z_seq
-
+'''
 
 if __name__ == "__main__":
     print("GCNEncoder loaded OK")
