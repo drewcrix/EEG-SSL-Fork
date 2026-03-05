@@ -75,15 +75,26 @@ if __name__ == '__main__':
 
             else:
                 model = LinearHeadBENDR.from_dataset(training)
-            
+            #EDITS DONE HERE
             encoder_map = None
             if args.encoder_map is not None:
                 with open(args.encoder_map, 'r') as f:
                     encoder_map = json.load(f)
-
+            
             if not args.random_init:
-                model.load_pretrained_modules(experiment.encoder_weights, experiment.context_weights,
-                                              freeze_encoder=args.freeze_encoder)
+                if args.model == utils.MODEL_CHOICES[1] and encoder_map is not None:
+                    if ds_name not in encoder_map:
+                        raise KeyError(f"Dataset '{ds_name}' not found in encoder map.")
+                    encoder_file = encoder_map[ds_name]
+                else:
+                    encoder_file = experiment.encoder_weights
+    
+                model.load_pretrained_modules(encoder_file, experiment.context_weights,
+                                            freeze_encoder=args.freeze_encoder)
+#EDITS FINISH HERE
+            #if not args.random_init:
+               # model.load_pretrained_modules(experiment.encoder_weights, experiment.context_weights,
+                                              #freeze_encoder=args.freeze_encoder)
 
                                               
             process = StandardClassification(model, metrics=added_metrics)
