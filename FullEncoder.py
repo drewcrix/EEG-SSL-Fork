@@ -25,6 +25,10 @@ from dn3.utils import DN3ConfigException
 from GNNencoder import GCNEncoder
 from CNNencoder import CNNEncoder
 
+#-----------------------#
+#Original GGNStackEncoder
+#-----------------------#
+"""
 class GGNStackEncoder(torch.nn.Module):
     def __init__(self, edge_index, edge_weight=None, hidden_size=512, dropout=None):
         super().__init__()
@@ -42,7 +46,7 @@ class GGNStackEncoder(torch.nn.Module):
             nhid=hidden_size,
             nout=hidden_size,
             dropout=dropout,
-            pool_ratio=0.6, #updated the pool ratio to 0.6 from 0.9
+            pool_ratio=0.5, #updated the pool ratio to 0.5 from 0.9
         )
 
         self.encoder_h = hidden_size
@@ -76,6 +80,11 @@ class GGNStackEncoder(torch.nn.Module):
 
     def description(self, sfreq=None, sequence_len=None):
         return f"CNN+GNN Encoder | sfreq={sfreq} | samples={sequence_len} | hidden={self.encoder_h}"
+"""
+#-----------------------#
+#Updated GGNStackEncoder 
+#----------------------#
+
 
 def adjacency_bids(top_level, subject=None):
     """
