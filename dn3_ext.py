@@ -577,7 +577,10 @@ class NEWBendingCollegeWav2Vec(BendingCollegeWav2Vec):
         return F.mse_loss(reconstructed_norm[mask_expanded],
                           original_norm[mask_expanded],
                           reduction='mean')
-
+#--------------------------------------------------#
+#Original Forward Pass for NEWBENDINGCollegeWav2Vec
+#--------------------------------------------------#
+    """
     def forward(self, *inputs):
         eeg = inputs[0]
 
@@ -598,7 +601,47 @@ class NEWBendingCollegeWav2Vec(BendingCollegeWav2Vec):
         self._original_eeg           = eeg
 
         return logits, embeddings, mask
+    """
+#--------------------------------------------------#
+#Updated Forward Pass for NEWBENDINGCollegeWav2Vec
+#--------------------------------------------------#
+    def forward(self, *inputs):
+        
+        #DN3 with deep1010: return_mask=True also passes a bool channel mask as inputs[1]
+        #we only want our int64 cluster labels, so check dtype before accepting it
+        eeg = inputs[0]
 
+        cluster_labels = None
+        dataset_idx    = None
+
+        long_tensors = [
+            inp for inp in inputs[1:]
+            if isinstance(inp, torch.Tensor) and inp.dtype == torch.long
+        ]
+
+        if isinstance(self.encoder, GGNStackEncoder):
+            if len(long_tensors) >= 2:
+                cluster_labels = long_tensors[0]
+                dataset_idx    = long_tensors[-1]
+            elif len(long_tensors) == 1:
+                dataset_idx = long_tensors[0]
+            if dataset_idx is not None:
+                self.encoder.set_active_dataset(dataset_idx[0].item()) #Tells encoder which dataset is active so it can use the right adjacency matrix. dataset_idx is a tensor of shape (batch_size,) but all values should be the same since DN3 batches by dataset, so just take the first one.
+        else:
+            if len(long_tensors) >= 1:
+                cluster_labels = long_tensors[0]
+        
+        logits, embeddings, mask = super().forward(eeg)
+
+        #save these so calculate_loss can access them
+        self._current_embeddings     = embeddings
+        self._current_mask           = mask
+        self._current_cluster_labels = cluster_labels
+        self._original_eeg           = eeg
+
+        return logits, embeddings, mask
+
+    
     def calculate_loss(self, inputs, outputs):
         """Called by DN3's fit() after every forward. Combines all active loss terms."""
         #original BENDR InfoNCE - correct answer is always index 0
