@@ -200,11 +200,13 @@ def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=True, 
     total_thinkers = 0
     edge_index     = None
     edge_weight    = None
+    edgeidx_dataset_dict   = {}
+    edgeweight_dataset_dict = {}
 
     target_sfreq = getattr(experiment, 'global_sfreq', 256)
     epoch_secs   = getattr(experiment, 'global_samples', epoch_len) / target_sfreq
 
-    for name, ds in experiment.datasets.items():
+    for i, (name, ds) in enumerate(experiment.datasets.items(), start=1):
         print("Constructing " + name)
 
         # auto-detect native sfreq and pick a safe downsample target
@@ -230,6 +232,8 @@ def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=True, 
 
         if use_GNN:
             edge_index, edge_weight = adjacency_bids(top_level=toplevel)
+            edgeidx_dataset_dict[f"dataset {i}"] = edge_index #added these
+            edgeweight_dataset_dict[f"dataset {i}"] = edge_weight #added thes
 
 
         is_validation = (hasattr(experiment, 'validation_dataset') and
@@ -261,7 +265,9 @@ def load_datasets(experiment, label_dict=None, epoch_len=2560, use_to1020=True, 
     # edge_index/edge_weight are None when not using GNN (e.g. test runs with To1020)
     _ei = edge_index if use_GNN else None
     _ew = edge_weight if use_GNN else None
-    return ConcatDataset(training), validation, total_thinkers, _ei, _ew
+    _eidict = edgeidx_dataset_dict if use_GNN else None
+    _ewdict = edgeweight_dataset_dict if use_GNN else None
+    return ConcatDataset(training), validation, total_thinkers, _ei, _ew, _eidict, _ewdict
 
 
 def parse_args():
@@ -311,12 +317,12 @@ if __name__ == '__main__':
     use_GNN    = args.use_gnn
     use_to1020 = not args.no_to1020 and not use_GNN  # GNN handles its own channels
 
-    training, validation, target_thinkers, edge_index, edge_weight = load_datasets(
+    training, validation, target_thinkers, edge_index, edge_weight, edge_index_dict, edge_weight_dict = load_datasets( #added the dictionaries
         experiment, label_dict=label_dict, epoch_len=epoch_len, use_to1020=use_to1020, use_GNN=use_GNN)
 
     if use_GNN:
         dropout = getattr(experiment, "dropout", 0.5)
-        encoder = GGNStackEncoder(edge_index,edge_weight,args.hidden_size,dropout)
+        encoder = GGNStackEncoder(edge_index_dict,edge_weight_dict,args.hidden_size,dropout) #Used the dictionaries as inputs instead of final value
         
     else:
         # default: ConvEncoderBENDR with To1020 fixed 21 channels
