@@ -37,7 +37,7 @@ class CNNEncoder(nn.Module):
     def __init__(
         self,
         output_channels: int = 4,
-        kernel_sizes: Sequence[int] = (128, 64, 32), #Compare these sizes with sfreq to make sure the sizes are ok 
+        kernel_sizes: Sequence[int] = (128, 32, 16), #Compare these sizes with sfreq to make sure the sizes are ok 
         pool_sizes: Sequence[int] = (5, 3, 2),
         dropout: float = 0.3, #decreased the dropout from 0.5 to 0.3
         stride: int = 1,
