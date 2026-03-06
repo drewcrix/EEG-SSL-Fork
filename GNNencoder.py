@@ -31,7 +31,7 @@ class GCNEncoder(nn.Module):
     - F  : Feature dim per electrode provided from CNN
     - Tp : Time dimension containing feature strengths over time
 """
-    def __init__(self, nfeat: int, nhid: int, nout: int, dropout: float = 0.5, pool_ratio: float = 0.6): #changed the pool ratio to 0.6
+    def __init__(self, nfeat: int, nhid: int, nout: int, dropout: float = 0.3, pool_ratio: float = 0.5): #changed the pool ratio to 0.5
         super().__init__()
 
         self.input_proj = nn.Linear(nfeat, nout) #projecting the CNN Features to GNN output
@@ -44,7 +44,7 @@ class GCNEncoder(nn.Module):
         self.gc2 = GCNConv(nhid, nout)
         self.bn2 = nn.BatchNorm1d(nout)
         self.rel2 = nn.PReLU()
-
+        
         self.drop = nn.Dropout(p=dropout)
     
     def _repeat_fixed_graph(self, edge_index, edge_weight, num_graphs, C):
@@ -99,8 +99,8 @@ class GCNEncoder(nn.Module):
 
         # Use SAGPooling scores as spatial weights, normalized per graph
         # might not need these weights. Can use SAGPooling as a hard filter instead of incorperating softmax
-        w = softmax(score, batch)                        # (N_kept,)
-        h_kept = h_kept * w.view(-1, 1, 1)              # weighted kept electrodes
+        #w = softmax(score, batch)                        # (N_kept,)
+        #h_kept = h_kept * w.view(-1, 1, 1)              # weighted kept electrodes
 
         # Sum kept electrodes back into one sequence per trial
         z = torch.zeros(B, Tp, h_kept.size(-1), device=h.device, dtype=h_kept.dtype)
