@@ -55,7 +55,7 @@ class CNNEncoder(nn.Module):
         o2 = o1 * 2
         o3 = o2 * 2
 
-        self.block1 = Block(1,  o1, kernel_sizes[0], pool_sizes[0], 0.2, stride, padding)
+        self.block1 = Block(1,  o1, kernel_sizes[0], pool_sizes[0], dropout, stride, padding)
         self.block2 = Block(o1, o2, kernel_sizes[1], pool_sizes[1], dropout, stride, padding)
         self.block3 = Block(o2, o3, kernel_sizes[2], pool_sizes[2], dropout, stride, padding)
 
