@@ -381,7 +381,8 @@ if __name__ == '__main__':
 
             encoder.save(f'checkpoints/encoder_{model_name}.pt')
             contextualizer.save(f'checkpoints/contextualizer_{model_name}.pt')
-          
+
+            if use_GNN:
             #edited section to also save sub-encoders when using GNN, so we can load them individually at test time by dataset 
                 ds_map = {}
                 for key in encoder.encoders:
